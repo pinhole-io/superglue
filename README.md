@@ -2,7 +2,6 @@
 
 **One Rust core for LLM orchestration.** Python, JavaScript, and Kotlin call the same loop.
 
-![CI](https://github.com/Bioto/superglue/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-BSD--4--Clause-blue.svg)
 
 SuperGlue talks to model providers, runs the tool loop, streams tokens, and records usage.
