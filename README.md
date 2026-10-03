@@ -2,8 +2,6 @@
 
 **One Rust core for LLM orchestration.** Python, JavaScript, and Kotlin call the same loop.
 
-![License](https://img.shields.io/badge/license-BSD--4--Clause-blue.svg)
-
 SuperGlue talks to model providers, runs the tool loop, streams tokens, and records usage.
 Bindings stay thin. Retry rules, SSE parsing, and tool dispatch live in one place.
 
