@@ -598,6 +598,9 @@ fn chat_error_to_gateway(err: ChatError) -> GatewayError {
         ChatError::UnsupportedProvider(provider) => GatewayError::bad_request(format!(
             "provider {provider} does not support chat completions; use POST /v1/systemone"
         )),
+        ChatError::UnsupportedModelCapability(capability) => GatewayError::bad_request(format!(
+            "{capability} model cannot be used for chat; use POST /v1/embeddings"
+        )),
         other => GatewayError::upstream(other.to_string()),
     }
 }

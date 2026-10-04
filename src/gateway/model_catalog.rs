@@ -14,10 +14,18 @@ use crate::http::{HttpClient, join_base_url};
 use crate::providers::{ProviderCredentials, ProviderId};
 
 fn model_entry(id: &str) -> Value {
+    let capabilities = match id
+        .split_once(':')
+        .and_then(|(_, model)| model.strip_prefix("embedding:"))
+    {
+        Some(model) if !model.is_empty() && !model.contains('*') => vec!["embedding"],
+        _ => Vec::new(),
+    };
     json!({
         "id": id,
         "object": "model",
-        "owned_by": "superglue-gateway"
+        "owned_by": "superglue-gateway",
+        "capabilities": capabilities,
     })
 }
 
@@ -218,6 +226,7 @@ mod tests {
             is_master: false,
             allowed_models: Some(vec![
                 "openai:gpt-4o-mini".into(),
+                "openai:embedding:text-embedding-3-small".into(),
                 "anthropic:claude-3-5-sonnet-20241022".into(),
             ]),
             max_reasoning_effort: None,
@@ -229,6 +238,17 @@ mod tests {
         assert!(ids.contains(&"openai:gpt-4o-mini"));
         assert!(ids.contains(&"anthropic:claude-3-5-sonnet-20241022"));
         assert!(!ids.contains(&"*"));
+        let embedding = models
+            .iter()
+            .find(|model| model["id"] == "openai:embedding:text-embedding-3-small")
+            .unwrap();
+        assert_eq!(embedding["capabilities"], json!(["embedding"]));
+        let chat = models
+            .iter()
+            .find(|model| model["id"] == "openai:gpt-4o-mini")
+            .unwrap();
+        assert_eq!(chat["capabilities"], json!([]));
+        assert_eq!(model_entry("openai:embedding:*")["capabilities"], json!([]));
     }
 
     #[tokio::test]

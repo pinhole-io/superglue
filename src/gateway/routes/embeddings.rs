@@ -44,7 +44,7 @@ pub async fn create_embedding(
         )));
     }
 
-    let qualified = format!("{}:{}", model_ref.provider.as_str(), model_ref.model);
+    let qualified = model_ref.qualified();
     let user_id = resolve_user_id(&auth, body.user.as_deref())?;
     preflight_async(&state.db, &auth, &user_id, &qualified).await?;
 

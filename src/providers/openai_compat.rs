@@ -360,6 +360,7 @@ mod tests {
         creds.insert_key(ProviderId::Xai, "xai-test");
         let model_ref = ModelRef {
             provider: ProviderId::Xai,
+            capability: None,
             model: "grok-4.5".into(),
             raw: "xai:grok-4.5".into(),
         };
@@ -395,6 +396,7 @@ mod tests {
         creds.insert_key(ProviderId::Groq, "gsk-test");
         let model_ref = ModelRef {
             provider: ProviderId::Groq,
+            capability: None,
             model: "openai/gpt-oss-120b".into(),
             raw: "groq:openai/gpt-oss-120b".into(),
         };
@@ -421,6 +423,7 @@ mod tests {
         creds.insert_key(ProviderId::OpenRouter, "or-test");
         let model_ref = ModelRef {
             provider: ProviderId::OpenRouter,
+            capability: None,
             model: "deepseek/deepseek-v4.1-flash".into(),
             raw: "openrouter:deepseek/deepseek-v4.1-flash".into(),
         };
@@ -456,6 +459,7 @@ mod tests {
         creds.insert_key(ProviderId::Xai, "xai-test");
         let model_ref = ModelRef {
             provider: ProviderId::Xai,
+            capability: None,
             model: "grok-4.5".into(),
             raw: "xai:grok-4.5".into(),
         };
@@ -496,6 +500,7 @@ mod tests {
         creds.insert_key(ProviderId::Groq, "gsk-test");
         let model_ref = ModelRef {
             provider: ProviderId::Groq,
+            capability: None,
             model: "llama-3.3-70b-versatile".into(),
             raw: "groq:llama-3.3-70b-versatile".into(),
         };
@@ -540,6 +545,7 @@ mod tests {
         creds.insert_key(ProviderId::RunInfra, "ri-test");
         let model_ref = ModelRef {
             provider: ProviderId::RunInfra,
+            capability: None,
             model: "deepseek-v4-flash".into(),
             raw: "runinfra:deepseek-v4-flash".into(),
         };
@@ -579,6 +585,7 @@ mod tests {
         creds.insert_key(ProviderId::RunInfra, "ri-test");
         let model_ref = ModelRef {
             provider: ProviderId::RunInfra,
+            capability: None,
             model: "deepseek-v4-flash".into(),
             raw: "runinfra:deepseek-v4-flash".into(),
         };
@@ -600,6 +607,7 @@ mod tests {
         creds.insert_key(ProviderId::Vercel, "vck-test");
         let model_ref = ModelRef {
             provider: ProviderId::Vercel,
+            capability: None,
             model: "anthropic/claude-opus-5".into(),
             raw: "vercel:anthropic/claude-opus-5".into(),
         };
@@ -667,6 +675,7 @@ mod tests {
         creds.insert_key(ProviderId::OpenAi, "sk-test");
         let model_ref = ModelRef {
             provider: ProviderId::OpenAi,
+            capability: None,
             model: "gpt-5.6-luna".into(),
             raw: "openai:gpt-5.6-luna".into(),
         };
@@ -692,6 +701,7 @@ mod tests {
         creds.insert_key(ProviderId::OpenAi, "sk-test");
         let model_ref = ModelRef {
             provider: ProviderId::OpenAi,
+            capability: None,
             model: "gpt-4o".into(),
             raw: "openai:gpt-4o".into(),
         };

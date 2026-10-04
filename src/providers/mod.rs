@@ -15,6 +15,6 @@ pub use adapter::{
     rate_limit_key_for, resolve_provider,
 };
 pub use credentials::{ApiKeyId, CredentialsError, ProviderCredentials, api_key_id};
-pub use model_ref::{ModelRef, parse_model_ref, wire_model_id};
+pub use model_ref::{ModelCapability, ModelRef, parse_model_ref, wire_model_id};
 pub use provider_id::{ProviderId, UnknownProvider};
 pub use rate_limit::{RateLimitKey, RateLimitRegistry, TYPESAFE_DEFAULT_QPS};

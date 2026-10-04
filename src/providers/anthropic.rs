@@ -649,6 +649,7 @@ mod tests {
         creds.insert_key(ProviderId::Anthropic, "sk-ant-test");
         let model_ref = ModelRef {
             provider: ProviderId::Anthropic,
+            capability: None,
             model: "claude-sonnet-4-20250514".into(),
             raw: "anthropic:claude-sonnet-4-20250514".into(),
         };
@@ -714,6 +715,7 @@ mod tests {
         creds.insert_key(ProviderId::Anthropic, "sk-ant-test");
         let model_ref = ModelRef {
             provider: ProviderId::Anthropic,
+            capability: None,
             model: "claude-sonnet-4-20250514".into(),
             raw: "anthropic:claude-sonnet-4-20250514".into(),
         };
@@ -748,6 +750,7 @@ mod tests {
         creds.insert_key(ProviderId::Anthropic, "sk-ant-test");
         let model_ref = ModelRef {
             provider: ProviderId::Anthropic,
+            capability: None,
             model: "claude-sonnet-4-20250514".into(),
             raw: "anthropic:claude-sonnet-4-20250514".into(),
         };

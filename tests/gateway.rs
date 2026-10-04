@@ -588,7 +588,11 @@ async fn list_models_returns_allowlist() {
             MASTER_KEY,
             Some(json!({
                 "user_id": "user-1",
-                "allowed_models": ["openai:gpt-4o-mini", "anthropic:*"]
+                "allowed_models": [
+                    "openai:gpt-4o-mini",
+                    "openai:embedding:text-embedding-3-small",
+                    "anthropic:*"
+                ]
             })),
         ))
         .await
@@ -612,6 +616,13 @@ async fn list_models_returns_allowlist() {
         .collect();
     assert!(ids.contains(&"openai:gpt-4o-mini"));
     assert!(ids.contains(&"anthropic:*"));
+    let embedding = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == "openai:embedding:text-embedding-3-small")
+        .unwrap();
+    assert_eq!(embedding["capabilities"], json!(["embedding"]));
 }
 
 #[tokio::test]
@@ -1287,7 +1298,8 @@ async fn virtual_key_proxies_embeddings() {
         "sk-test",
     );
     let app = router(state);
-    let virtual_key = setup_virtual_key(app.clone(), &["openai:*"]).await;
+    let virtual_key =
+        setup_virtual_key(app.clone(), &["openai:embedding:text-embedding-3-small"]).await;
 
     let response = app
         .oneshot(auth_request(
@@ -1295,7 +1307,7 @@ async fn virtual_key_proxies_embeddings() {
             "/v1/embeddings",
             &virtual_key,
             Some(json!({
-                "model": "openai:text-embedding-3-small",
+                "model": "openai:embedding:text-embedding-3-small",
                 "input": "hello",
                 "dimensions": 2
             })),
@@ -1306,6 +1318,36 @@ async fn virtual_key_proxies_embeddings() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_to_json(response.into_body()).await;
     assert_eq!(body["data"][0]["embedding"], json!([0.1, 0.2]));
+}
+
+#[tokio::test]
+async fn embedding_model_is_rejected_by_chat() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_openai(
+        MASTER_KEY,
+        &dir.path().join("gw.db"),
+        &server.uri(),
+        "sk-test",
+    );
+    let app = router(state);
+    let virtual_key =
+        setup_virtual_key(app.clone(), &["openai:embedding:text-embedding-3-small"]).await;
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/chat/completions",
+            &virtual_key,
+            Some(json!({
+                "model": "openai:embedding:text-embedding-3-small",
+                "messages": [{"role": "user", "content": "hello"}]
+            })),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1344,7 +1386,7 @@ async fn embeddings_enforce_model_allowlist() {
             "/v1/embeddings",
             &virtual_key,
             Some(json!({
-                "model": "openai:text-embedding-3-small",
+                "model": "openai:embedding:text-embedding-3-small",
                 "input": "hello"
             })),
         ))

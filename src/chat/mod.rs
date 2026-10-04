@@ -661,6 +661,8 @@ pub enum ChatError {
     Credentials(#[from] crate::providers::CredentialsError),
     #[error("unsupported provider for this API: {0}")]
     UnsupportedProvider(crate::providers::ProviderId),
+    #[error("{0} model reference cannot be used for chat")]
+    UnsupportedModelCapability(crate::providers::ModelCapability),
     #[error("API response failed: {0}")]
     Api(String),
     /// Tool loop ended before a successful completion; carries transcript for persistence.
@@ -703,6 +705,9 @@ impl ChatError {
 pub(crate) fn resolve_chat_provider(
     model_ref: &crate::providers::ModelRef,
 ) -> Result<Box<dyn crate::providers::LlmProvider>, ChatError> {
+    if let Some(capability) = model_ref.capability {
+        return Err(ChatError::UnsupportedModelCapability(capability));
+    }
     crate::providers::resolve_provider(model_ref)
         .map_err(|err| ChatError::UnsupportedProvider(err.0))
 }
@@ -3793,5 +3798,20 @@ mod dispatch_freshness_tests {
         assert!(!second_text.contains("before"));
         assert_eq!(read.calls.load(Ordering::SeqCst), 2);
         assert_eq!(edit.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn chat_rejects_an_embedding_model_reference() {
+        let model_ref =
+            crate::providers::parse_model_ref("openai:embedding:text-embedding-3-small");
+        let Err(error) = super::resolve_chat_provider(&model_ref) else {
+            panic!("embedding model must not resolve as chat");
+        };
+        assert!(matches!(
+            error,
+            super::ChatError::UnsupportedModelCapability(
+                crate::providers::ModelCapability::Embedding
+            )
+        ));
     }
 }

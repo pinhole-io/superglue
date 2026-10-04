@@ -28,6 +28,14 @@ Rust callers can use `Client::embed` or `Client::embed_many` with a
 The gateway exposes the same shape at `POST /v1/embeddings`. Anthropic and
 TypeSafe do not support this capability.
 
+Use `provider:embedding:model` for a model that must appear in an embedding
+catalog. For example, use `openai:embedding:text-embedding-3-small`.
+
+The tag is authoritative. The gateway strips `embedding:` before a direct
+provider request. It preserves the complete reference for gateway requests.
+Gateway administrators must add each tagged model to the key's model list.
+Superglue does not infer this capability from a provider or model name.
+
 ## Realtime voice
 
 Enable the `realtime` feature for duplex voice sessions. The first adapter is
