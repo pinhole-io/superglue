@@ -20,6 +20,14 @@ Bindings load these via `ProviderCredentials::from_env()` when constructing a cl
 
 Pass `requests_per_second_for` (Python) / `requestsPerSecondFor` (JS/Kotlin) as a map from provider name to QPS. The legacy single `requests_per_second` / `quota_per_second` applies to OpenAI when no per-provider map is set.
 
+## Embeddings
+
+Rust callers can use `Client::embed` or `Client::embed_many` with a
+`provider:model` string. OpenAI-compatible providers use `/v1/embeddings`.
+
+The gateway exposes the same shape at `POST /v1/embeddings`. Anthropic and
+TypeSafe do not support this capability.
+
 ## Realtime voice
 
 Enable the `realtime` feature for duplex voice sessions. The first adapter is

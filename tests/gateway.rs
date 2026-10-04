@@ -7,7 +7,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::json;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use superglue::gateway::{router, test_state, test_state_with_openai, test_state_with_provider};
@@ -1254,6 +1254,104 @@ async fn audio_transcription_enforces_model_allowlist() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn virtual_key_proxies_embeddings() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .and(body_json(json!({
+            "model": "text-embedding-3-small",
+            "input": "hello",
+            "dimensions": 2
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{
+                "object": "embedding",
+                "index": 0,
+                "embedding": [0.1, 0.2]
+            }],
+            "model": "text-embedding-3-small",
+            "usage": {"prompt_tokens": 1, "total_tokens": 1}
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_openai(
+        MASTER_KEY,
+        &dir.path().join("gw.db"),
+        &server.uri(),
+        "sk-test",
+    );
+    let app = router(state);
+    let virtual_key = setup_virtual_key(app.clone(), &["openai:*"]).await;
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/embeddings",
+            &virtual_key,
+            Some(json!({
+                "model": "openai:text-embedding-3-small",
+                "input": "hello",
+                "dimensions": 2
+            })),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_to_json(response.into_body()).await;
+    assert_eq!(body["data"][0]["embedding"], json!([0.1, 0.2]));
+}
+
+#[tokio::test]
+async fn embeddings_reject_unsupported_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(MASTER_KEY, &dir.path().join("gw.db"));
+    let app = router(state);
+    let virtual_key = setup_virtual_key(app.clone(), &["anthropic:*"]).await;
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/embeddings",
+            &virtual_key,
+            Some(json!({
+                "model": "anthropic:claude",
+                "input": "hello"
+            })),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn embeddings_enforce_model_allowlist() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(MASTER_KEY, &dir.path().join("gw.db"));
+    let app = router(state);
+    let virtual_key = setup_virtual_key(app.clone(), &["openai:gpt-4o-mini"]).await;
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/embeddings",
+            &virtual_key,
+            Some(json!({
+                "model": "openai:text-embedding-3-small",
+                "input": "hello"
+            })),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

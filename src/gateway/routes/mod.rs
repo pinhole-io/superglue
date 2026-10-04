@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod audio;
 pub mod completions;
+pub mod embeddings;
 pub mod health;
 pub mod responses;
 pub mod systemone;
@@ -37,6 +38,7 @@ pub fn router(state: Arc<GatewayState>) -> Router {
     let proxy = Router::new()
         .route("/v1/chat/completions", post(completions::chat_completions))
         .route("/v1/responses", post(responses::create_response))
+        .route("/v1/embeddings", post(embeddings::create_embedding))
         .route("/v1/models", get(completions::list_models))
         .route("/v1/audio/transcriptions", post(audio::transcribe))
         .route("/v1/speech/transcriptions", post(audio::transcribe))

@@ -47,6 +47,7 @@ These documents describe **intent, tradeoffs, and current implementation status*
 | Process events (`StatusEmitter` + cost estimation) | ✅ shipped |
 | gRPC server (`tonic`, `grpc` feature) | ✅ shipped |
 | LLM gateway (`axum`, `gateway` feature) | ✅ shipped |
+| OpenAI-compatible embeddings (Rust + gateway) | ✅ shipped |
 | Node.js binding (`napi-rs`) | ✅ shipped |
 | Proto-generated language client stubs | ✅ shipped (`scripts/generate-proto-clients.sh`) |
 | Replay / run-resume from audit trail | ✅ shipped (`audit::resume_chat`, `audit::resume_response`) |

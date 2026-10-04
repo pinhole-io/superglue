@@ -876,6 +876,46 @@ impl Client {
         crate::systemone::system_one(&self.inner.http, &credentials, request).await
     }
 
+    /// Generate one vector with an OpenAI-compatible embedding model.
+    pub async fn embed(
+        &self,
+        model: impl Into<String>,
+        input: impl Into<String>,
+        dimensions: Option<usize>,
+    ) -> Result<crate::embeddings::EmbeddingOutcome, crate::embeddings::EmbedError> {
+        let credentials = crate::chat::credentials_for(&self.inner.options);
+        crate::embeddings::embed(
+            &self.inner.http,
+            &credentials,
+            crate::embeddings::EmbeddingRequest {
+                model: model.into(),
+                input: crate::embeddings::EmbeddingInput::Text(input.into()),
+                dimensions,
+            },
+        )
+        .await
+    }
+
+    /// Generate vectors for multiple inputs with an OpenAI-compatible embedding model.
+    pub async fn embed_many(
+        &self,
+        model: impl Into<String>,
+        inputs: Vec<String>,
+        dimensions: Option<usize>,
+    ) -> Result<crate::embeddings::EmbeddingOutcome, crate::embeddings::EmbedError> {
+        let credentials = crate::chat::credentials_for(&self.inner.options);
+        crate::embeddings::embed(
+            &self.inner.http,
+            &credentials,
+            crate::embeddings::EmbeddingRequest {
+                model: model.into(),
+                input: crate::embeddings::EmbeddingInput::Texts(inputs),
+                dimensions,
+            },
+        )
+        .await
+    }
+
     /// Register a TypeSafe System One guardrail. Fail-closed on upstream errors.
     pub async fn add_typesafe_guardrail(
         &self,
