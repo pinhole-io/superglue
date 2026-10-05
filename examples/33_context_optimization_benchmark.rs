@@ -37,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut rows: Vec<(String, ScenarioMetrics)> = Vec::new();
         for cfg in BENCH_CONFIGS {
             let opts = chat_options_for_fat_run(cfg, *profile);
+            let (_outcome, metrics) = run_scenario_with_raw(opts, *profile, FAT_RAW_CHARS).await?;
             rows.push((format!("{}_{}", profile.name(), cfg.label), metrics));
         }
         print_comparison_table(&rows);

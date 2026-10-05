@@ -6,7 +6,7 @@
 //!
 //! Payload text follows [`ScrubMode`] from [`super::init_tracing`]. The default
 //! is [`ScrubMode::Redact`]. Roles, tool names, model ids, and token counts stay
-//! visible. Message text, tool arguments, and tool results do not.
+//! visible. Tool arguments and tool results are always redacted.
 //!
 //! `data:` URLs are replaced with `[data-uri]` in every mode. Each string
 //! attribute is capped at 16_384 characters.
@@ -29,7 +29,6 @@ pub const SPAN_KIND: &str = "openinference.span.kind";
 const MAX_CHARS: usize = 16_384;
 
 const MIME_TEXT: &str = "text/plain";
-const MIME_JSON: &str = "application/json";
 
 /// OpenInference `openinference.span.kind` values used by this crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,16 +241,24 @@ fn push_message(
     if let Some(id) = &msg.tool_call_id {
         attrs.push(str_attr(format!("{base}.tool_call_id"), id.clone()));
     }
+    let content_mode = if msg.role == "tool" {
+        ScrubMode::Redact
+    } else {
+        mode
+    };
     match msg.content.as_ref() {
         Some(MessageContent::Text(text)) => {
-            attrs.push(str_attr(format!("{base}.content"), sensitive(text, mode)));
+            attrs.push(str_attr(
+                format!("{base}.content"),
+                sensitive(text, content_mode),
+            ));
         }
-        Some(MessageContent::Parts(parts)) => push_parts(attrs, &base, parts, mode),
+        Some(MessageContent::Parts(parts)) => push_parts(attrs, &base, parts, content_mode),
         None => {
             if let Some(refusal) = &msg.refusal {
                 attrs.push(str_attr(
                     format!("{base}.content"),
-                    sensitive(refusal, mode),
+                    sensitive(refusal, content_mode),
                 ));
             }
         }
@@ -268,7 +275,7 @@ fn push_message(
             ));
             attrs.push(str_attr(
                 format!("{call_base}.function.arguments"),
-                sensitive(&call.function.arguments, mode),
+                "[REDACTED]",
             ));
         }
     }
@@ -405,21 +412,13 @@ pub(crate) fn agent_attributes(agent_id: &str, session_id: &str) -> Vec<Attr> {
     attrs
 }
 
-pub(crate) fn tool_attributes(
-    session_id: &str,
-    name: &str,
-    tool_id: &str,
-    arguments: &str,
-    mode: ScrubMode,
-) -> Vec<Attr> {
+pub(crate) fn tool_attributes(session_id: &str, name: &str, tool_id: &str) -> Vec<Attr> {
     let mut attrs = vec![str_attr(SPAN_KIND, SpanKind::Tool.as_str())];
     push_session(&mut attrs, session_id);
     attrs.push(str_attr("tool.name", name));
     if !tool_id.is_empty() {
         attrs.push(str_attr("tool.id", tool_id));
     }
-    attrs.push(str_attr("input.mime_type", MIME_JSON));
-    attrs.push(str_attr("input.value", sensitive(arguments, mode)));
     attrs
 }
 
@@ -595,14 +594,8 @@ pub(crate) fn tag_llm(session_id: &str, model_name: &str, provider: &str) {
     apply_current(&attrs);
 }
 
-pub(crate) fn tag_tool(session_id: &str, name: &str, tool_id: &str, arguments: &str) {
-    apply_current(&tool_attributes(
-        session_id,
-        name,
-        tool_id,
-        arguments,
-        payload_mode(),
-    ));
+pub(crate) fn tag_tool(session_id: &str, name: &str, tool_id: &str) {
+    apply_current(&tool_attributes(session_id, name, tool_id));
 }
 
 pub(crate) fn set_input_text(value: &str) {
@@ -611,10 +604,6 @@ pub(crate) fn set_input_text(value: &str) {
 
 pub(crate) fn set_output_text(value: &str) {
     apply_current(&io_attributes(None, Some(value), MIME_TEXT, payload_mode()));
-}
-
-pub(crate) fn set_output_json(value: &str) {
-    apply_current(&io_attributes(None, Some(value), MIME_JSON, payload_mode()));
 }
 
 pub(crate) fn set_usage(usage: &proto::Usage) {
@@ -797,7 +786,7 @@ mod tests {
                 &attrs,
                 "llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"
             ),
-            &AttrValue::Str(r#"{"order_id":"1842"}"#.into())
+            &AttrValue::Str("[REDACTED]".into())
         );
         assert_eq!(attr(&attrs, "llm.token_count.prompt"), &AttrValue::Int(212));
         assert_eq!(
@@ -876,21 +865,66 @@ mod tests {
             &AttrValue::Str("support-triage-agent".into())
         );
 
-        let tool = tool_attributes(
-            "session-1",
-            "lookup_order",
-            "call_1",
-            "{\"a\":1}",
-            ScrubMode::Hash,
-        );
+        let tool = tool_attributes("session-1", "lookup_order", "call_1");
         assert_eq!(attr(&tool, SPAN_KIND), &AttrValue::Str("TOOL".into()));
         assert_eq!(
             attr(&tool, "tool.name"),
             &AttrValue::Str("lookup_order".into())
         );
-        let AttrValue::Str(input) = attr(&tool, "input.value") else {
-            panic!("input.value");
+        assert!(tool.iter().all(|attr| attr.key != "input.value"));
+    }
+
+    #[test]
+    fn allow_mode_never_records_tool_payloads() {
+        const SECRET: &str = "marker-password-7e4f";
+        let tool_message = ChatMessage::text("tool", SECRET);
+        let tool_attrs = llm_request_attributes(
+            &LlmStart {
+                session_id: "session-1",
+                model_name: "m",
+                provider: "openai",
+                messages: &[tool_message],
+                tools: None,
+                params: &InvocationParams::default(),
+            },
+            ScrubMode::Allow,
+        );
+        assert!(
+            tool_attrs
+                .iter()
+                .all(|attr| !format!("{:?}", attr.value).contains(SECRET))
+        );
+
+        let assistant = ChatMessage {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "agentic_crawl".into(),
+                    arguments: format!(r#"{{"inputs":{{"password":"{SECRET}"}}}}"#),
+                },
+            }]),
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
         };
-        assert!(input.starts_with("[HASH:"));
+        let response_attrs = llm_response_attributes(
+            &LlmFinish {
+                model_name: "m",
+                provider: "openai",
+                finish_reason: Some("tool_calls"),
+                usage: None,
+                output: &assistant,
+            },
+            ScrubMode::Allow,
+        );
+        assert!(
+            response_attrs
+                .iter()
+                .all(|attr| !format!("{:?}", attr.value).contains(SECRET))
+        );
     }
 }

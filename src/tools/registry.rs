@@ -18,6 +18,11 @@ pub trait Tool: Send + Sync {
 
     async fn call(&self, arguments: Value) -> Result<Value, ToolInvokeError>;
 
+    /// Return whether the tool is currently available for discovery and invocation.
+    fn is_available(&self) -> bool {
+        true
+    }
+
     /// Whether PostTool offload may replace this tool's result with a notepad stub.
     fn context_policy(&self) -> ToolContextPolicy {
         ToolContextPolicy::OffloadWhenLarge
@@ -67,7 +72,11 @@ impl ToolRegistry {
     /// prefix stays byte-stable across restarts and sub-agents.
     pub async fn list_specs(&self) -> Vec<ToolSpec> {
         let map = self.tools.read().await;
-        let mut specs: Vec<ToolSpec> = map.values().map(|(t, _)| t.spec()).collect();
+        let mut specs: Vec<ToolSpec> = map
+            .values()
+            .filter(|(tool, _)| tool.is_available())
+            .map(|(tool, _)| tool.spec())
+            .collect();
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
     }
@@ -97,8 +106,11 @@ impl ToolRegistry {
     ) -> Result<(Arc<dyn Tool>, ToolRetryPolicy), ToolInvokeError> {
         let map = self.tools.read().await;
         match map.get(name) {
-            Some((tool, policy)) => Ok((Arc::clone(tool), policy.clone())),
+            Some((tool, policy)) if tool.is_available() => Ok((Arc::clone(tool), policy.clone())),
             None => Err(ToolInvokeError::UnknownTool {
+                name: name.to_string(),
+            }),
+            Some(_) => Err(ToolInvokeError::UnknownTool {
                 name: name.to_string(),
             }),
         }
@@ -107,23 +119,33 @@ impl ToolRegistry {
     /// Invoke a tool by name.
     #[instrument(skip(self, arguments), fields(tool = name))]
     pub async fn invoke(&self, name: &str, arguments: Value) -> Result<Value, ToolInvokeError> {
-        crate::telemetry::openinference::tag_tool("", name, "", &arguments.to_string());
-        let tool = {
-            let map = self.tools.read().await;
-            map.get(name).map(|(t, _)| Arc::clone(t))
+        crate::telemetry::openinference::tag_tool("", name, "");
+        let tool = match self.resolve_invocation(name).await {
+            Ok((tool, _)) => tool,
+            Err(error) => {
+                crate::telemetry::openinference::fail_current("unknown tool");
+                return Err(error);
+            }
         };
-        let Some(tool) = tool else {
+        if !tool.is_available() {
             crate::telemetry::openinference::fail_current("unknown tool");
             return Err(ToolInvokeError::UnknownTool {
                 name: name.to_string(),
             });
-        };
+        }
         let result = tool.call(arguments).await;
-        match &result {
-            Ok(value) => crate::telemetry::openinference::set_output_json(&value.to_string()),
-            Err(err) => crate::telemetry::openinference::fail_current(&err.to_string()),
+        if let Err(err) = &result {
+            crate::telemetry::openinference::fail_current(tool_error_class(err));
         }
         result
+    }
+}
+
+fn tool_error_class(error: &ToolInvokeError) -> &'static str {
+    match error {
+        ToolInvokeError::HandlerFailed { .. } => "tool handler failed",
+        ToolInvokeError::UnknownTool { .. } => "unknown tool",
+        ToolInvokeError::DuplicateRegistration { .. } => "duplicate tool registration",
     }
 }
 
@@ -131,6 +153,7 @@ impl ToolRegistry {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct EchoTool {
         name: String,
@@ -154,6 +177,25 @@ mod tests {
 
     fn make_tool(name: &str) -> Arc<dyn Tool> {
         Arc::new(EchoTool { name: name.into() })
+    }
+
+    struct GatedTool {
+        available: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for GatedTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec::new("gated", json!({"type": "object"}))
+        }
+
+        async fn call(&self, arguments: Value) -> Result<Value, ToolInvokeError> {
+            Ok(arguments)
+        }
+
+        fn is_available(&self) -> bool {
+            self.available.load(Ordering::Acquire)
+        }
     }
 
     #[tokio::test]
@@ -213,5 +255,41 @@ mod tests {
             .map(|s| s.name)
             .collect();
         assert_eq!(names, vec!["alpha", "mu", "zeta"]);
+    }
+
+    #[tokio::test]
+    async fn unavailable_tools_are_hidden_and_rejected() {
+        let available = Arc::new(AtomicBool::new(false));
+        let registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(GatedTool {
+                available: Arc::clone(&available),
+            }))
+            .await
+            .unwrap();
+
+        assert!(registry.list_specs().await.is_empty());
+        assert!(matches!(
+            registry.resolve_invocation("gated").await,
+            Err(ToolInvokeError::UnknownTool { name }) if name == "gated"
+        ));
+        assert!(matches!(
+            registry.invoke("gated", json!({})).await,
+            Err(ToolInvokeError::UnknownTool { name }) if name == "gated"
+        ));
+
+        available.store(true, Ordering::Release);
+        assert_eq!(registry.list_specs().await[0].name, "gated");
+        assert_eq!(
+            registry.invoke("gated", json!({"ok": true})).await.unwrap(),
+            json!({"ok": true})
+        );
+    }
+
+    #[test]
+    fn telemetry_error_class_never_contains_handler_payload() {
+        let error =
+            ToolInvokeError::handler("marker-password-7e4f", Some("secret-code".to_string()));
+        assert_eq!(tool_error_class(&error), "tool handler failed");
     }
 }

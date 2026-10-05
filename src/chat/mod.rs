@@ -6,7 +6,6 @@ mod file_locks;
 mod loop_guard;
 pub mod reasoning;
 pub(crate) mod stream_tools;
-mod tool_summary;
 
 pub(crate) use loop_guard::{SharedToolLoopGuard, new_tool_loop_guard};
 
@@ -53,11 +52,27 @@ use crate::openai::{
 use crate::proto;
 use crate::tools::{
     ActiveToolSet, CODE_TOOL_NAME, DEFAULT_TOOL_ROUTE_MODEL, OnToolError, ToolInvokeError,
-    ToolMode, ToolRegistry, ToolRetryPolicy, is_router_call, router_call_id_from_calls,
+    ToolMode, ToolRegistry, ToolRetryPolicy, ToolSpec, is_router_call, router_call_id_from_calls,
     router_query_from_calls,
 };
 #[cfg(feature = "code")]
 use crate::tools::{CodeLimits, source_from_arguments};
+
+async fn refresh_available_tools(
+    registry: &ToolRegistry,
+    known_specs: &mut Vec<ToolSpec>,
+    active_set: &mut ActiveToolSet,
+    mode: ToolMode,
+) -> bool {
+    let available_specs = registry.list_specs().await;
+    if available_specs == *known_specs {
+        return false;
+    }
+
+    *known_specs = available_specs.clone();
+    *active_set = ActiveToolSet::new(available_specs, mode);
+    true
+}
 
 /// Callback for a compact context block appended after a condensed tool round.
 #[derive(Clone)]
@@ -1273,9 +1288,6 @@ async fn invoke_with_policy(
     }
 }
 
-/// Cap tool result/argument payload size in process-event metadata (UI / observability).
-const TOOL_EVENT_METADATA_MAX_BYTES: usize = 16_384;
-
 fn truncate_bytes(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
@@ -1285,10 +1297,6 @@ fn truncate_bytes(value: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     format!("{}…", &value[..end])
-}
-
-pub(crate) fn truncate_tool_event_metadata(value: &str) -> String {
-    truncate_bytes(value, TOOL_EVENT_METADATA_MAX_BYTES)
 }
 
 /// Truncate tool-result text before it is appended to chat history.
@@ -1331,6 +1339,25 @@ async fn available_tool_names(registry: &ToolRegistry) -> String {
     format!("{}, …", names[..MAX_NAMES].join(", "))
 }
 
+fn chat_error_class(error: &ChatError) -> &'static str {
+    match error.root_cause() {
+        ChatError::Http(_) => "http",
+        ChatError::Serde(_) => "serialization",
+        ChatError::Tool(_) => "tool",
+        ChatError::Hook(_) => "hook",
+        ChatError::Guardrail(_) => "guardrail",
+        ChatError::NoChoice => "no_choice",
+        ChatError::EmptyResponse => "empty_response",
+        ChatError::MaxToolRounds(_) => "max_tool_rounds",
+        ChatError::Cancelled => "cancelled",
+        ChatError::Credentials(_) => "credentials",
+        ChatError::UnsupportedProvider(_) => "unsupported_provider",
+        ChatError::UnsupportedModelCapability(_) => "unsupported_model_capability",
+        ChatError::Api(_) => "api",
+        ChatError::PartialTurn { .. } => "partial_turn",
+    }
+}
+
 /// Dispatch a single `"function"` tool call through the full pre/post hook pipeline.
 ///
 /// Returns the [`ChatMessage`] with `role="tool"` that should be appended to the
@@ -1358,12 +1385,7 @@ pub(crate) async fn dispatch_one(
         code_allowlist,
     } = ctx;
     let tool_name = tc.function.name.clone();
-    crate::telemetry::openinference::tag_tool(
-        request_id,
-        &tool_name,
-        &tc.id,
-        tc.function.arguments.trim(),
-    );
+    crate::telemetry::openinference::tag_tool(request_id, &tool_name, &tc.id);
     if emit_start && let Some(emitter) = status_emitter {
         let mut ev = ProcessEvent::new(ProcessEventKind::ToolCallStart, request_id, model);
         ev.round = round;
@@ -1371,10 +1393,6 @@ pub(crate) async fn dispatch_one(
             .insert("tool_name".to_string(), tool_name.clone());
         ev.metadata
             .insert("tool_call_id".to_string(), tc.id.clone());
-        ev.metadata.insert(
-            "arguments".to_string(),
-            truncate_tool_event_metadata(tc.function.arguments.trim()),
-        );
         emit_safe(Some(emitter), ev).await;
     }
 
@@ -1585,32 +1603,21 @@ pub(crate) async fn dispatch_one(
             .insert("tool_name".to_string(), tool_name.clone());
         ev.metadata
             .insert("tool_call_id".to_string(), tc.id.clone());
-        ev.metadata.insert(
-            "arguments".to_string(),
-            truncate_tool_event_metadata(tc.function.arguments.trim()),
-        );
         match &exec_result {
-            Ok(content) => {
-                if let Some(summary) = tool_summary::tool_result_summary(&tool_name, content) {
-                    ev.metadata.insert("result_summary".to_string(), summary);
-                }
-                ev.metadata
-                    .insert("result".to_string(), truncate_tool_event_metadata(content));
+            Ok(_) => {
+                ev.metadata.insert("outcome".to_string(), "ok".to_string());
             }
             Err(err) => {
-                ev.error_type = Some(err.to_string());
-                ev.metadata.insert(
-                    "result".to_string(),
-                    truncate_tool_event_metadata(&err.to_string()),
-                );
+                ev.error_type = Some(chat_error_class(err).to_string());
+                ev.metadata
+                    .insert("outcome".to_string(), "error".to_string());
             }
         }
         emit_safe(Some(emitter), ev).await;
     }
 
-    match &exec_result {
-        Ok(content) => crate::telemetry::openinference::set_output_text(content),
-        Err(err) => crate::telemetry::openinference::fail_current(&err.to_string()),
+    if let Err(err) = &exec_result {
+        crate::telemetry::openinference::fail_current(chat_error_class(err));
     }
 
     let content = truncate_tool_result(exec_result?, tool_result_max_chars);
@@ -1710,8 +1717,8 @@ pub async fn complete_with_tools(
     let loop_guard = new_tool_loop_guard();
     let mut last_prefix_hash = None;
 
-    let all_specs = registry.list_specs().await;
-    let mut active_set = ActiveToolSet::new(all_specs, options.tool_mode);
+    let mut all_specs = registry.list_specs().await;
+    let mut active_set = ActiveToolSet::new(all_specs.clone(), options.tool_mode);
     let route_model = options
         .tool_route_model
         .as_deref()
@@ -1792,6 +1799,7 @@ pub async fn complete_with_tools(
         })
         .await;
 
+        refresh_available_tools(registry, &mut all_specs, &mut active_set, options.tool_mode).await;
         let tool_specs = active_set.specs_for_llm();
         let chat_tools = active_set.chat_tools_for_llm();
         log_prefix_guard(options, tool_specs, &mut last_prefix_hash);
@@ -2721,8 +2729,8 @@ where
     let loop_guard = new_tool_loop_guard();
     let mut last_prefix_hash = None;
 
-    let all_specs = registry.list_specs().await;
-    let mut active_set = ActiveToolSet::new(all_specs, options.tool_mode);
+    let mut all_specs = registry.list_specs().await;
+    let mut active_set = ActiveToolSet::new(all_specs.clone(), options.tool_mode);
     let mut stream_code_allowlist: Option<Arc<HashSet<String>>> = None;
     let route_model = options
         .tool_route_model
@@ -2783,6 +2791,11 @@ where
         })
         .await;
 
+        if refresh_available_tools(registry, &mut all_specs, &mut active_set, options.tool_mode)
+            .await
+        {
+            stream_code_allowlist = None;
+        }
         let tool_specs = active_set.specs_for_llm();
         let chat_tools = active_set.chat_tools_for_llm();
         log_prefix_guard(options, tool_specs, &mut last_prefix_hash);

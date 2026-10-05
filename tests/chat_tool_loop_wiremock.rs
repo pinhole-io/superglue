@@ -1,7 +1,7 @@
 //! Chat completions + tool loop against a mock OpenAI server.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde_json::json;
@@ -35,6 +35,51 @@ impl Tool for EchoTool {
     }
 }
 
+struct UnlockTool {
+    available: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl Tool for UnlockTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new("unlock", json!({"type": "object"}))
+    }
+
+    async fn call(
+        &self,
+        _arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, superglue::tools::ToolInvokeError> {
+        self.available.store(true, Ordering::Release);
+        Ok(json!({"ok": true}))
+    }
+
+    fn is_available(&self) -> bool {
+        !self.available.load(Ordering::Acquire)
+    }
+}
+
+struct UnlockedTool {
+    available: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl Tool for UnlockedTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new("unlocked", json!({"type": "object"}))
+    }
+
+    async fn call(
+        &self,
+        _arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, superglue::tools::ToolInvokeError> {
+        Ok(json!({"ok": true}))
+    }
+
+    fn is_available(&self) -> bool {
+        self.available.load(Ordering::Acquire)
+    }
+}
+
 fn text_only_response() -> serde_json::Value {
     json!({
         "id": "chatcmpl-test",
@@ -64,6 +109,26 @@ fn tool_call_response() -> serde_json::Value {
                         "name": "echo",
                         "arguments": "{\"x\":1}"
                     }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    })
+}
+
+fn named_tool_call_response(name: &str) -> serde_json::Value {
+    json!({
+        "id": "chatcmpl-tool",
+        "model": "mock",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_unlock",
+                    "type": "function",
+                    "function": {"name": name, "arguments": "{}"}
                 }]
             },
             "finish_reason": "tool_calls"
@@ -154,6 +219,73 @@ async fn completion_tool_then_assistant_text() {
     assert_eq!(out.messages[1].role, "assistant");
     assert_eq!(out.messages[2].role, "tool");
     assert_eq!(out.messages[3].role, "assistant");
+}
+
+#[tokio::test]
+async fn completion_refreshes_available_tools_after_a_tool_call() {
+    let server = MockServer::start().await;
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+    let requests_for_mock = Arc::clone(&requests);
+    let calls = Arc::new(AtomicU32::new(0));
+    let calls_for_mock = Arc::clone(&calls);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("request JSON");
+            let names = body["tools"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+                .collect();
+            requests_for_mock.lock().expect("requests lock").push(names);
+            let response = if calls_for_mock.fetch_add(1, Ordering::SeqCst) == 0 {
+                named_tool_call_response("unlock")
+            } else {
+                text_only_response()
+            };
+            ResponseTemplate::new(200).set_body_json(response)
+        })
+        .mount(&server)
+        .await;
+
+    let available = Arc::new(AtomicBool::new(false));
+    let registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(UnlockTool {
+            available: Arc::clone(&available),
+        }))
+        .await
+        .unwrap();
+    registry
+        .register(Arc::new(UnlockedTool { available }))
+        .await
+        .unwrap();
+    let options = ChatOptions {
+        base_url: server.uri(),
+        api_key: secrecy::SecretString::from("sk-test".to_string()),
+        model: "mock".into(),
+        max_tool_rounds: 4,
+        ..Default::default()
+    };
+
+    let outcome = complete_with_tools(
+        &HttpClient::new(ClientConfig::default()).unwrap(),
+        &registry,
+        &HookRegistry::new(),
+        &GuardrailRegistry::new(),
+        vec![ChatMessage::text("user", "unlock tools")],
+        &options,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.rounds, 2);
+    assert_eq!(
+        *requests.lock().expect("requests lock"),
+        vec![vec!["unlock".to_string()], vec!["unlocked".to_string()]]
+    );
 }
 
 #[tokio::test]

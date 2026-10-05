@@ -1,7 +1,7 @@
 //! Streaming tool-round tests (OpenAI SSE format).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -39,7 +39,56 @@ impl Tool for EchoTool {
     }
 }
 
+struct UnlockTool {
+    available: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl Tool for UnlockTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new("unlock", json!({"type": "object"}))
+    }
+
+    async fn call(
+        &self,
+        _arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, superglue::tools::ToolInvokeError> {
+        self.available.store(true, Ordering::Release);
+        Ok(json!({"ok": true}))
+    }
+
+    fn is_available(&self) -> bool {
+        !self.available.load(Ordering::Acquire)
+    }
+}
+
+struct UnlockedTool {
+    available: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl Tool for UnlockedTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new("unlocked", json!({"type": "object"}))
+    }
+
+    async fn call(
+        &self,
+        _arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, superglue::tools::ToolInvokeError> {
+        Ok(json!({"ok": true}))
+    }
+
+    fn is_available(&self) -> bool {
+        self.available.load(Ordering::Acquire)
+    }
+}
+
 fn tool_round_sse() -> String {
+    named_tool_round_sse("echo")
+}
+
+fn named_tool_round_sse(name: &str) -> String {
     let mut body = String::new();
     let chunks = [
         json!({
@@ -51,7 +100,7 @@ fn tool_round_sse() -> String {
                         "index": 0,
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "echo", "arguments": ""}
+                        "function": {"name": name, "arguments": ""}
                     }]
                 },
                 "finish_reason": null
@@ -152,6 +201,75 @@ async fn stream_tool_round_then_text() {
     assert_eq!(out.content, "done");
     assert_eq!(out.rounds, 2);
     assert_eq!(deltas.join(""), "done");
+}
+
+#[tokio::test]
+async fn stream_refreshes_available_tools_after_a_tool_call() {
+    let server = MockServer::start().await;
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+    let requests_for_mock = Arc::clone(&requests);
+    let calls = Arc::new(AtomicU32::new(0));
+    let calls_for_mock = Arc::clone(&calls);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("request JSON");
+            let names = body["tools"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+                .collect();
+            requests_for_mock.lock().expect("requests lock").push(names);
+            let sse = if calls_for_mock.fetch_add(1, Ordering::SeqCst) == 0 {
+                named_tool_round_sse("unlock")
+            } else {
+                text_round_sse(&["done"])
+            };
+            ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream")
+        })
+        .mount(&server)
+        .await;
+
+    let available = Arc::new(AtomicBool::new(false));
+    let registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(UnlockTool {
+            available: Arc::clone(&available),
+        }))
+        .await
+        .unwrap();
+    registry
+        .register(Arc::new(UnlockedTool { available }))
+        .await
+        .unwrap();
+    let options = ChatOptions {
+        base_url: server.uri(),
+        api_key: secrecy::SecretString::from("sk-test".to_string()),
+        model: "openai:mock".into(),
+        max_tool_rounds: 4,
+        ..Default::default()
+    };
+
+    let outcome = stream_complete_with_tools(
+        &HttpClient::new(ClientConfig::default()).unwrap(),
+        &registry,
+        &HookRegistry::new(),
+        &GuardrailRegistry::new(),
+        vec![ChatMessage::text("user", "unlock tools")],
+        &options,
+        |_| {},
+        |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.rounds, 2);
+    assert_eq!(
+        *requests.lock().expect("requests lock"),
+        vec![vec!["unlock".to_string()], vec!["unlocked".to_string()]]
+    );
 }
 
 fn reasoning_then_text_sse() -> String {
