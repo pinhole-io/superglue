@@ -106,7 +106,12 @@ fn model_lower(model: &str) -> String {
 
 fn is_gpt5_family(model: &str) -> bool {
     let m = model_lower(model);
-    m.starts_with("gpt-5") || m.contains("gpt-5.")
+    // gpt-5.* and gpt-6.* (e.g. gpt-6-luna) share chat reasoning_effort levels,
+    // including `none` required when function tools use /v1/chat/completions.
+    m.starts_with("gpt-5")
+        || m.contains("gpt-5.")
+        || m.starts_with("gpt-6")
+        || m.contains("gpt-6.")
 }
 
 fn is_o_series(model: &str) -> bool {
@@ -215,6 +220,15 @@ mod tests {
                 Some(effort.as_api_str())
             );
         }
+    }
+
+    #[test]
+    fn gpt6_luna_keeps_none_for_tools() {
+        assert_eq!(
+            normalize_reasoning_effort_str("gpt-6-luna", "none").as_deref(),
+            Some("none")
+        );
+        assert!(!supports_chat_sampling_params("gpt-6-luna"));
     }
 
     #[test]
