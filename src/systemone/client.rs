@@ -33,7 +33,7 @@ pub enum SystemOneError {
 
 /// Parse a model string into a TypeSafe model ref.
 ///
-/// Bare ids such as `jev-latest` become `typesafe:jev-latest`.
+/// Bare model ids become `typesafe:<id>` (for example `jev-latest` → `typesafe:jev-latest`).
 pub fn qualify_model(raw: Option<&str>) -> Result<crate::providers::ModelRef, SystemOneError> {
     let raw = raw
         .map(str::trim)
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn qualify_defaults_to_jev_latest() {
+    fn qualify_defaults_bare_model_id() {
         let model_ref = qualify_model(None).expect("default");
         assert_eq!(model_ref.provider, ProviderId::TypeSafe);
         assert_eq!(model_ref.model, DEFAULT_MODEL);

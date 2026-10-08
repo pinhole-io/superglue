@@ -50,7 +50,7 @@ const REGION_PICKER_COUNTRIES: &[&str] = &[
 ];
 
 const GRAY_MAX_ALNUM: usize = 400;
-const PAGE_JEV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+const PAGE_SYSTEM_ONE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
 const PAGE_NOUL: f64 = 0.5;
 
 /// Returns true when `text` looks like a bot-block page, region picker, or other non-content chrome.
@@ -150,7 +150,7 @@ async fn judge_page_usable(
     let request =
         SystemOneRequest::new(clip_state(text, 400), questions).with_model("typesafe:jev-latest");
     let work = system_one(http, credentials, request);
-    let response = tokio::time::timeout(PAGE_JEV_TIMEOUT, work)
+    let response = tokio::time::timeout(PAGE_SYSTEM_ONE_TIMEOUT, work)
         .await
         .ok()?
         .ok()?;
@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gray_page_jev_no_marks_low_signal() {
+    async fn gray_page_system_one_no_marks_low_signal() {
         use crate::http::{ClientConfig, RetryPolicy};
         use crate::providers::ProviderId;
         use serde_json::json;

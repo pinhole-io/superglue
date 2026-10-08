@@ -33,7 +33,7 @@ pub async fn resolve_tool_route(
     }
 
     if parse_model_ref(route_model).provider.uses_system_one() && dynamic_specs.len() <= 20 {
-        match resolve_tool_route_jev(http, credentials, user_context, dynamic_specs, route_model)
+        match resolve_tool_route_system_one(http, credentials, user_context, dynamic_specs, route_model)
             .await
         {
             Some(specs) => return specs,
@@ -154,10 +154,10 @@ pub async fn resolve_tool_route(
     result
 }
 
-const TOOL_ROUTE_JEV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+const TOOL_ROUTE_SYSTEM_ONE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
 const TOOL_ROUTE_NOUL: f64 = 0.5;
 
-async fn resolve_tool_route_jev(
+async fn resolve_tool_route_system_one(
     http: &HttpClient,
     credentials: &ProviderCredentials,
     user_context: &str,
@@ -185,7 +185,7 @@ async fn resolve_tool_route_jev(
     let request =
         SystemOneRequest::new(clip_state(user_context, 0), questions).with_model(route_model);
     let work = system_one(http, credentials, request);
-    let response = tokio::time::timeout(TOOL_ROUTE_JEV_TIMEOUT, work)
+    let response = tokio::time::timeout(TOOL_ROUTE_SYSTEM_ONE_TIMEOUT, work)
         .await
         .ok()?
         .ok()?;

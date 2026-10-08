@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_typesafe_jev() {
+    fn parses_typesafe_model_ref() {
         let r = parse_model_ref("typesafe:jev-latest");
         assert_eq!(r.provider, ProviderId::TypeSafe);
         assert_eq!(r.model, "jev-latest");
