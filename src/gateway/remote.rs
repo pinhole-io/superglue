@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::gateway::db::{ApiKeyListItem, BudgetRecord, UsageRecord, UserRecord};
+use crate::gateway::db::{ApiKeyListItem, BudgetRecord, ProfileRecord, UsageRecord, UserRecord};
 use crate::gateway::error::{GatewayError, GatewayResult};
 
 /// Admin API client for a running gateway server.
@@ -29,6 +29,17 @@ struct KeysResponse {
 #[derive(Debug, Deserialize)]
 struct BudgetsResponse {
     budgets: Vec<BudgetRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfilesResponse {
+    profiles: Vec<ProfileRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteProfileResult {
+    pub deleted: String,
+    pub users_cleared: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,7 +154,7 @@ impl RemoteClient {
         &self,
         user_id: &str,
         alias: Option<&str>,
-        budget_id: Option<&str>,
+        profile_id: Option<&str>,
     ) -> GatewayResult<UserRecord> {
         #[derive(serde::Serialize)]
         struct Body<'a> {
@@ -151,14 +162,14 @@ impl RemoteClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             alias: Option<&'a str>,
             #[serde(skip_serializing_if = "Option::is_none")]
-            budget_id: Option<&'a str>,
+            profile_id: Option<&'a str>,
         }
         self.post_json(
             "/v1/users",
             &Body {
                 user_id,
                 alias,
-                budget_id,
+                profile_id,
             },
         )
         .await
@@ -173,23 +184,113 @@ impl RemoteClient {
         &self,
         user_id: &str,
         alias: Option<&str>,
-        budget_id: Option<Option<&str>>,
+        profile_id: Option<Option<&str>>,
     ) -> GatewayResult<UserRecord> {
         #[derive(serde::Serialize)]
         struct Body<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
             alias: Option<&'a str>,
             #[serde(skip_serializing_if = "Option::is_none")]
-            budget_id: Option<Option<&'a str>>,
+            profile_id: Option<Option<&'a str>>,
         }
         self.patch_json(
             &format!("/v1/users/{user_id}"),
             &Body {
                 alias,
-                budget_id: budget_id.map(|b| b),
+                profile_id: profile_id.map(|p| p),
             },
         )
         .await
+    }
+
+    pub async fn create_profile(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        allowed_models: &[String],
+        budget_id: Option<&str>,
+        max_reasoning_effort: Option<&str>,
+        enabled: bool,
+    ) -> GatewayResult<ProfileRecord> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            description: Option<&'a str>,
+            allowed_models: &'a [String],
+            #[serde(skip_serializing_if = "Option::is_none")]
+            budget_id: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            max_reasoning_effort: Option<&'a str>,
+            enabled: bool,
+        }
+        self.post_json(
+            "/v1/profiles",
+            &Body {
+                name,
+                description,
+                allowed_models,
+                budget_id,
+                max_reasoning_effort,
+                enabled,
+            },
+        )
+        .await
+    }
+
+    pub async fn list_profiles(&self) -> GatewayResult<Vec<ProfileRecord>> {
+        let resp: ProfilesResponse = self.get_json("/v1/profiles").await?;
+        Ok(resp.profiles)
+    }
+
+    pub async fn update_profile(
+        &self,
+        profile_id: &str,
+        name: Option<&str>,
+        description: Option<Option<&str>>,
+        allowed_models: Option<&[String]>,
+        budget_id: Option<Option<&str>>,
+        max_reasoning_effort: Option<Option<&str>>,
+        enabled: Option<bool>,
+    ) -> GatewayResult<ProfileRecord> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            name: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            description: Option<Option<&'a str>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            allowed_models: Option<&'a [String]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            budget_id: Option<Option<&'a str>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            max_reasoning_effort: Option<Option<&'a str>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            enabled: Option<bool>,
+        }
+        self.patch_json(
+            &format!("/v1/profiles/{profile_id}"),
+            &Body {
+                name,
+                description,
+                allowed_models,
+                budget_id,
+                max_reasoning_effort,
+                enabled,
+            },
+        )
+        .await
+    }
+
+    pub async fn delete_profile(&self, profile_id: &str) -> GatewayResult<DeleteProfileResult> {
+        let resp = self
+            .http
+            .delete(format!("{}/v1/profiles/{profile_id}", self.base_url))
+            .header("X-Superglue-Key", self.auth_header())
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("request failed: {e}")))?;
+        parse_json(resp).await
     }
 
     pub async fn delete_user(&self, user_id: &str) -> GatewayResult<DeleteUserResult> {

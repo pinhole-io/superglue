@@ -1,19 +1,36 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, clearMasterKey, getMasterKey, setMasterKey } from './api'
+import { AppShell } from './components/AppShell'
 import { GatewayBudgetsPage } from './pages/gateway/BudgetsPage'
 import { GatewayCapturePage } from './pages/gateway/CapturePage'
 import { GatewayCaptureRecordDetailPage } from './pages/gateway/CaptureRecordDetailPage'
 import { GatewayCaptureRecordsPage } from './pages/gateway/CaptureRecordsPage'
 import { GatewayKeysPage } from './pages/gateway/KeysPage'
 import { GatewayOverviewPage } from './pages/gateway/OverviewPage'
+import { GatewayProfilesPage } from './pages/gateway/ProfilesPage'
 import { GatewayProvidersPage } from './pages/gateway/ProvidersPage'
 import { GatewayUsagePage } from './pages/gateway/UsagePage'
 import { GatewayUsersPage } from './pages/gateway/UsersPage'
-import { GatewayNavProvider, type GatewayCaptureView, type GatewayNav } from './components/agent/gatewayNav'
+import { SetupWizard } from './pages/SetupWizard'
+import { StyleGuidePage } from './pages/StyleGuidePage'
+import { currentRoute, navigate, type Route } from './router'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import './style.css'
 
-type Tab = 'overview' | 'users' | 'keys' | 'budgets' | 'usage' | 'providers' | 'capture'
+type BootState = 'loading' | 'ready' | 'setup'
+
+async function isEmptyGateway(): Promise<boolean> {
+  const [users, keys, budgets] = await Promise.all([
+    api.users(),
+    api.keys(),
+    api.budgets(),
+  ])
+  return users.users.length === 0 && keys.keys.length === 0 && budgets.budgets.length === 0
+}
 
 function Login({ onLogin }: { onLogin: () => void }) {
   const [key, setKey] = useState('')
@@ -42,81 +59,143 @@ function Login({ onLogin }: { onLogin: () => void }) {
         <p className="eyebrow">SUPERGLUE</p>
         <h1>Gateway admin</h1>
         <p className="muted">Use the gateway master key to manage users, keys, budgets, and usage.</p>
-        <label>
-          Master key
-          <input
+        <div className="grid gap-1.5">
+          <Label htmlFor="master-key">Master key</Label>
+          <Input
+            id="master-key"
             autoFocus
             type="password"
             value={key}
             onChange={(event) => setKey(event.target.value)}
             placeholder="GATEWAY_MASTER_KEY"
           />
-        </label>
+        </div>
         {error ? <p className="error">{error}</p> : null}
-        <button disabled={!key.trim() || loading} type="submit">{loading ? 'Checking…' : 'Sign in'}</button>
+        <Button disabled={!key.trim() || loading} type="submit">
+          {loading ? 'Checking…' : 'Sign in'}
+        </Button>
       </form>
     </main>
   )
 }
 
-function AdminApp({ onLogout }: { onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>('overview')
-  const [captureView, setCaptureView] = useState<'status' | 'records' | 'detail'>('status')
-  const [requestId, setRequestId] = useState<string>()
-  const tabs: [Tab, string][] = [
-    ['overview', 'Overview'],
-    ['users', 'Users'],
-    ['keys', 'Keys'],
-    ['budgets', 'Budgets'],
-    ['usage', 'Usage'],
-    ['providers', 'Providers'],
-    ['capture', 'Capture'],
-  ]
+function useRoute(): Route {
+  const [route, setRoute] = useState<Route>(() => currentRoute())
+  useEffect(() => {
+    const onPop = () => setRoute(currentRoute())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  return route
+}
 
-  const openCapture = (view: 'status' | 'records' | 'detail', id?: string) => {
-    setTab('capture')
-    setCaptureView(view)
-    setRequestId(id)
-  }
-  const nav: GatewayNav = {
-    openTab: (next) => {
-      setTab(next)
-      if (next === 'capture') setCaptureView('status')
-    },
-    openCapture: (view: GatewayCaptureView) => openCapture(view.name, view.name === 'detail' ? view.requestId : undefined),
+function AdminApp({ onLogout }: { onLogout: () => void }) {
+  const route = useRoute()
+
+  useEffect(() => {
+    if (window.location.pathname === '/admin' || window.location.pathname === '/admin/') {
+      navigate({ name: 'overview' }, true)
+    }
+  }, [])
+
+  let page
+  switch (route.name) {
+    case 'overview':
+      page = <GatewayOverviewPage />
+      break
+    case 'users':
+      page = <GatewayUsersPage />
+      break
+    case 'keys':
+      page = <GatewayKeysPage />
+      break
+    case 'budgets':
+      page = <GatewayBudgetsPage />
+      break
+    case 'profiles':
+      page = <GatewayProfilesPage />
+      break
+    case 'usage':
+      page = <GatewayUsagePage />
+      break
+    case 'providers':
+      page = <GatewayProvidersPage />
+      break
+    case 'capture':
+      page = <GatewayCapturePage />
+      break
+    case 'capture-records':
+      page = <GatewayCaptureRecordsPage />
+      break
+    case 'capture-detail':
+      page = <GatewayCaptureRecordDetailPage requestId={route.requestId} />
+      break
+    case 'styleguide':
+      page = <StyleGuidePage />
+      break
   }
 
   return (
-    <div className="admin-shell">
-      <header className="admin-header">
-        <div><p className="eyebrow">SUPERGLUE</p><h1>Gateway admin</h1></div>
-        <button className="secondary" onClick={onLogout} type="button">Sign out</button>
-      </header>
-      <nav className="tabs" aria-label="Gateway admin">
-        {tabs.map(([id, label]) => (
-          <button className={tab === id ? 'active' : ''} key={id} onClick={() => { setTab(id); if (id === 'capture') setCaptureView('status') }} type="button">
-            {label}
-          </button>
-        ))}
-      </nav>
-      <GatewayNavProvider value={nav}>
-        <main className="admin-main">
-        {tab === 'overview' ? <GatewayOverviewPage /> : null}
-        {tab === 'users' ? <GatewayUsersPage /> : null}
-        {tab === 'keys' ? <GatewayKeysPage /> : null}
-        {tab === 'budgets' ? <GatewayBudgetsPage /> : null}
-        {tab === 'usage' ? <GatewayUsagePage /> : null}
-        {tab === 'providers' ? <GatewayProvidersPage /> : null}
-        {tab === 'capture' && captureView === 'status' ? <GatewayCapturePage /> : null}
-        {tab === 'capture' && captureView === 'records' ? (
-          <GatewayCaptureRecordsPage />
-        ) : null}
-        {tab === 'capture' && captureView === 'detail' ? (
-          <GatewayCaptureRecordDetailPage requestId={requestId} />
-        ) : null}
-        </main>
-      </GatewayNavProvider>
-    </div>
+    <AppShell route={route} onLogout={onLogout}>
+      {page}
+    </AppShell>
+  )
+}
+
+function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+  const [boot, setBoot] = useState<BootState>('loading')
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setBoot('loading')
+    isEmptyGateway()
+      .then((empty) => {
+        if (!cancelled) setBoot(empty ? 'setup' : 'ready')
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+          setBoot('ready')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (boot === 'loading') {
+    return (
+      <main className="login-shell">
+        <div className="login-card">
+          <p className="eyebrow">SUPERGLUE</p>
+          <h1>Gateway admin</h1>
+          <p className="muted">Checking gateway configuration…</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (boot === 'setup') {
+    return (
+      <SetupWizard
+        onComplete={() => {
+          navigate({ name: 'overview' }, true)
+          setBoot('ready')
+        }}
+      />
+    )
+  }
+
+  return (
+    <>
+      {error ? (
+        <div className="p-3">
+          <p className="error m-0">{error}</p>
+        </div>
+      ) : null}
+      <AdminApp onLogout={onLogout} />
+    </>
   )
 }
 
@@ -125,9 +204,19 @@ function App() {
   useEffect(() => {
     if (!authenticated) clearMasterKey()
   }, [authenticated])
-  return authenticated
-    ? <AdminApp onLogout={() => { clearMasterKey(); setAuthenticated(false) }} />
-    : <Login onLogin={() => setAuthenticated(true)} />
+  return (
+    <TooltipProvider>
+      {authenticated ? (
+        <AuthenticatedApp onLogout={() => { clearMasterKey(); setAuthenticated(false) }} />
+      ) : (
+        <Login onLogin={() => setAuthenticated(true)} />
+      )}
+    </TooltipProvider>
+  )
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)

@@ -41,21 +41,30 @@ superglue gateway --url "$SUPERGLUE_GATEWAY_URL" key create --user-id alice --mo
 All manage commands accept `--output pretty|json`. Remote mode uses the same subcommands as local mode.
 
 ```bash
-# Users
-superglue gateway user create --user-id alice --alias Alice --budget-id <budget-id>
-superglue gateway user list
-superglue gateway user update --user-id alice --budget-id <new-budget-id>
-
-# Virtual keys (model flag is repeatable)
-superglue gateway key create --user-id alice --model openai:gpt-4o-mini --model anthropic:*
-superglue gateway key list
-superglue gateway key update --id <key-id> --active false
-superglue gateway key delete --id <key-id>
-
 # Budgets
 superglue gateway budget create --max-budget 10 --duration-sec 2592000
 superglue gateway budget create --max-budget 50 --duration-sec 2592000 --enforce false  # track-only
 superglue gateway budget list
+
+# Profiles (model defaults, optional budget, optional reasoning cap)
+superglue gateway profile create --name default \
+  --model 'openai:*' --model 'anthropic:*' \
+  --budget-id <budget-id>
+superglue gateway profile list
+superglue gateway profile update --id <profile-id> --model 'openai:*' --enabled true
+superglue gateway profile delete --id <profile-id>
+
+# Users (assign a profile to copy its budget onto the user)
+superglue gateway user create --user-id alice --alias Alice --profile-id <profile-id>
+superglue gateway user list
+superglue gateway user update --user-id alice --profile-id <profile-id>
+
+# Virtual keys (model flag is repeatable; omit --model to inherit from the user's profile)
+superglue gateway key create --user-id alice
+superglue gateway key create --user-id alice --model openai:gpt-4o-mini --model anthropic:*
+superglue gateway key list
+superglue gateway key update --id <key-id> --active false
+superglue gateway key delete --id <key-id>
 
 # Usage
 superglue gateway usage list --user-id alice --limit 50
@@ -67,6 +76,14 @@ superglue gateway model list
 superglue gateway model list --key sgw-...
 superglue gateway --url "$SUPERGLUE_GATEWAY_URL" model list
 ```
+
+A **profile** stores allowed model patterns, an optional budget, and an optional
+`max_reasoning_effort`. User budgets come only from the assigned profile —
+there is no direct per-user budget assignment. Assigning a profile copies the
+profile budget onto that user; clearing or deleting the profile clears the
+user budget. Creating a key with no `--model` flags copies the user's enabled
+profile models (and reasoning cap) onto the key. Existing keys keep their own
+allowlist until you update them.
 
 Key creation prints the plaintext secret **once** — store it immediately.
 
@@ -108,21 +125,23 @@ curl -X POST http://localhost:8080/v1/budgets \
   -H "Content-Type: application/json" \
   -d '{"max_budget": 10.0, "duration_sec": 2592000, "enforce": true}'
 
-# Create a user with that budget
+# Create a profile (models + budget defaults)
+curl -X POST http://localhost:8080/v1/profiles \
+  -H "X-Superglue-Key: Bearer $GATEWAY_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"default","allowed_models":["openai:*","anthropic:*"],"budget_id":"<budget-id>"}'
+
+# Create a user with that profile (budget is copied from the profile)
 curl -X POST http://localhost:8080/v1/users \
   -H "X-Superglue-Key: Bearer $GATEWAY_MASTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id": "alice", "alias": "Alice", "budget_id": "<budget-id>"}'
+  -d '{"user_id": "alice", "alias": "Alice", "profile_id": "<profile-id>"}'
 
-# Create a virtual key with model allowlist
+# Create a virtual key (omit allowed_models to inherit from the user's profile)
 curl -X POST http://localhost:8080/v1/keys \
   -H "X-Superglue-Key: Bearer $GATEWAY_MASTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "alice-app",
-    "user_id": "alice",
-    "allowed_models": ["openai:gpt-4o-mini", "anthropic:*"]
-  }'
+  -d '{"name": "alice-app", "user_id": "alice"}'
 ```
 
 The plaintext key is returned **once** in the response. Store it securely.

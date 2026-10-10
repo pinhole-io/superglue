@@ -69,6 +69,14 @@ pub fn router(state: Arc<GatewayState>) -> Router {
             "/v1/budgets/{id}",
             patch(admin::update_budget).delete(admin::delete_budget),
         )
+        .route(
+            "/v1/profiles",
+            post(admin::create_profile).get(admin::list_profiles),
+        )
+        .route(
+            "/v1/profiles/{id}",
+            patch(admin::update_profile).delete(admin::delete_profile),
+        )
         .route("/v1/usage", get(admin::list_usage))
         .route("/v1/usage/summary", get(admin::usage_summary))
         .route("/v1/usage/zero-cost", delete(admin::delete_zero_cost_usage))

@@ -11,7 +11,8 @@ use uuid::Uuid;
 use crate::gateway::auth::hash_key;
 use crate::gateway::error::{GatewayError, GatewayResult};
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
+const MAX_PROFILE_MODELS: usize = 64;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS budgets (
@@ -74,6 +75,26 @@ const MIGRATION_V2: &str = "
 CREATE INDEX IF NOT EXISTS idx_usage_logs_created_at ON usage_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_logs_user_created ON usage_logs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_logs_key_created ON usage_logs(key_id, created_at);
+";
+
+const MIGRATION_V3: &str = "
+CREATE TABLE IF NOT EXISTS profiles (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    budget_id TEXT REFERENCES budgets(id),
+    max_reasoning_effort TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_models (
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    model_pattern TEXT NOT NULL,
+    PRIMARY KEY (profile_id, model_pattern)
+);
+
+ALTER TABLE users ADD COLUMN profile_id TEXT REFERENCES profiles(id);
 ";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,8 +169,22 @@ pub struct UserRecord {
     pub id: String,
     pub alias: Option<String>,
     pub budget_id: Option<String>,
+    pub profile_id: Option<String>,
     pub spend: f64,
     pub next_budget_reset_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileRecord {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub budget_id: Option<String>,
+    pub max_reasoning_effort: Option<String>,
+    pub enabled: bool,
+    pub allowed_models: Vec<String>,
+    pub user_count: u32,
     pub created_at: String,
 }
 
@@ -334,10 +369,14 @@ impl Database {
         .ok_or_else(|| GatewayError::not_found(format!("budget {budget_id} not found")))
     }
 
-    /// Delete a budget tier and clear `budget_id` on users that referenced it.
+    /// Delete a budget tier and clear `budget_id` on users and profiles that referenced it.
     pub fn delete_budget(&self, budget_id: &str) -> GatewayResult<u32> {
         let conn = self.lock()?;
         let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE profiles SET budget_id = NULL WHERE budget_id = ?1",
+            params![budget_id],
+        )?;
         let users_cleared = tx.execute(
             "UPDATE users SET budget_id = NULL, next_budget_reset_at = NULL WHERE budget_id = ?1",
             params![budget_id],
@@ -356,21 +395,37 @@ impl Database {
         &self,
         user_id: &str,
         alias: Option<&str>,
-        budget_id: Option<&str>,
+        profile_id: Option<&str>,
     ) -> GatewayResult<UserRecord> {
         let conn = self.lock()?;
         let created_at = chrono::Utc::now().to_rfc3339();
-        let next_reset = budget_id
+        let mut effective_budget: Option<String> = None;
+        let mut effective_profile = profile_id.map(str::to_string);
+        if let Some(pid) = profile_id {
+            let profile = self
+                .load_profile_in_conn(&conn, pid)?
+                .ok_or_else(|| GatewayError::bad_request(format!("profile {pid} not found")))?;
+            if !profile.enabled {
+                return Err(GatewayError::bad_request(format!(
+                    "profile {pid} is disabled"
+                )));
+            }
+            effective_budget = profile.budget_id.clone();
+            effective_profile = Some(pid.to_string());
+        }
+        let next_reset = effective_budget
+            .as_deref()
             .map(|bid| compute_next_reset(&conn, bid))
             .transpose()?;
         conn.execute(
-            "INSERT INTO users (id, alias, budget_id, spend, next_budget_reset_at, created_at) VALUES (?1, ?2, ?3, 0.0, ?4, ?5)",
-            params![user_id, alias, budget_id, next_reset, created_at],
+            "INSERT INTO users (id, alias, budget_id, profile_id, spend, next_budget_reset_at, created_at) VALUES (?1, ?2, ?3, ?4, 0.0, ?5, ?6)",
+            params![user_id, alias, effective_budget, effective_profile, next_reset, created_at],
         )?;
         Ok(UserRecord {
             id: user_id.to_string(),
             alias: alias.map(str::to_string),
-            budget_id: budget_id.map(str::to_string),
+            budget_id: effective_budget,
+            profile_id: effective_profile,
             spend: 0.0,
             next_budget_reset_at: next_reset,
             created_at,
@@ -380,7 +435,7 @@ impl Database {
     pub fn get_user(&self, user_id: &str) -> GatewayResult<Option<UserRecord>> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT id, alias, budget_id, spend, next_budget_reset_at, created_at FROM users WHERE id = ?1",
+            "SELECT id, alias, budget_id, profile_id, spend, next_budget_reset_at, created_at FROM users WHERE id = ?1",
             params![user_id],
             map_user,
         )
@@ -391,7 +446,7 @@ impl Database {
     pub fn list_users(&self) -> GatewayResult<Vec<UserRecord>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT id, alias, budget_id, spend, next_budget_reset_at, created_at FROM users ORDER BY created_at",
+            "SELECT id, alias, budget_id, profile_id, spend, next_budget_reset_at, created_at FROM users ORDER BY created_at",
         )?;
         let rows = stmt.query_map([], map_user)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -401,7 +456,7 @@ impl Database {
         &self,
         user_id: &str,
         alias: Option<Option<&str>>,
-        budget_id: Option<Option<&str>>,
+        profile_id: Option<Option<&str>>,
     ) -> GatewayResult<UserRecord> {
         let conn = self.lock()?;
         if let Some(a) = alias {
@@ -410,15 +465,37 @@ impl Database {
                 params![a, user_id],
             )?;
         }
-        if let Some(b) = budget_id {
-            let next_reset = b.map(|bid| compute_next_reset(&conn, bid)).transpose()?;
-            conn.execute(
-                "UPDATE users SET budget_id = ?1, next_budget_reset_at = ?2 WHERE id = ?3",
-                params![b, next_reset, user_id],
-            )?;
+        if let Some(p) = profile_id {
+            match p {
+                None => {
+                    conn.execute(
+                        "UPDATE users SET profile_id = NULL, budget_id = NULL, next_budget_reset_at = NULL WHERE id = ?1",
+                        params![user_id],
+                    )?;
+                }
+                Some(pid) => {
+                    let profile = self.load_profile_in_conn(&conn, pid)?.ok_or_else(|| {
+                        GatewayError::bad_request(format!("profile {pid} not found"))
+                    })?;
+                    if !profile.enabled {
+                        return Err(GatewayError::bad_request(format!(
+                            "profile {pid} is disabled"
+                        )));
+                    }
+                    let next_reset = profile
+                        .budget_id
+                        .as_deref()
+                        .map(|bid| compute_next_reset(&conn, bid))
+                        .transpose()?;
+                    conn.execute(
+                        "UPDATE users SET profile_id = ?1, budget_id = ?2, next_budget_reset_at = ?3 WHERE id = ?4",
+                        params![pid, profile.budget_id, next_reset, user_id],
+                    )?;
+                }
+            }
         }
         conn.query_row(
-            "SELECT id, alias, budget_id, spend, next_budget_reset_at, created_at FROM users WHERE id = ?1",
+            "SELECT id, alias, budget_id, profile_id, spend, next_budget_reset_at, created_at FROM users WHERE id = ?1",
             params![user_id],
             map_user,
         )
@@ -448,6 +525,300 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    pub fn create_profile(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        allowed_models: &[String],
+        budget_id: Option<&str>,
+        max_reasoning_effort: Option<&str>,
+        enabled: bool,
+    ) -> GatewayResult<ProfileRecord> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(GatewayError::bad_request("name is required"));
+        }
+        validate_profile_models(allowed_models)?;
+        if let Some(bid) = budget_id
+            && self.get_budget(bid)?.is_none()
+        {
+            return Err(GatewayError::bad_request(format!(
+                "budget {bid} does not exist"
+            )));
+        }
+        let id = Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let conn = self.lock()?;
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO profiles (id, name, description, budget_id, max_reasoning_effort, enabled, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                name,
+                description,
+                budget_id,
+                max_reasoning_effort,
+                i32::from(enabled),
+                created_at
+            ],
+        )?;
+        for pattern in allowed_models {
+            tx.execute(
+                "INSERT INTO profile_models (profile_id, model_pattern) VALUES (?1, ?2)",
+                params![id, pattern],
+            )?;
+        }
+        tx.commit()?;
+        drop(conn);
+        self.get_profile(&id)?
+            .ok_or_else(|| GatewayError::Internal("profile missing after create".into()))
+    }
+
+    pub fn get_profile(&self, profile_id: &str) -> GatewayResult<Option<ProfileRecord>> {
+        let conn = self.lock()?;
+        self.load_profile_in_conn(&conn, profile_id)
+    }
+
+    pub fn list_profiles(&self) -> GatewayResult<Vec<ProfileRecord>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, budget_id, max_reasoning_effort, enabled, created_at FROM profiles ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, i32>(5)? != 0,
+                row.get::<_, String>(6)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, name, description, budget_id, max_reasoning_effort, enabled, created_at) =
+                row?;
+            let allowed_models = self.list_profile_models_in_conn(&conn, &id)?;
+            let user_count = self.count_profile_users_in_conn(&conn, &id)?;
+            out.push(ProfileRecord {
+                id,
+                name,
+                description,
+                budget_id,
+                max_reasoning_effort,
+                enabled,
+                allowed_models,
+                user_count,
+                created_at,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn update_profile(
+        &self,
+        profile_id: &str,
+        name: Option<&str>,
+        description: Option<Option<&str>>,
+        allowed_models: Option<&[String]>,
+        budget_id: Option<Option<&str>>,
+        max_reasoning_effort: Option<Option<&str>>,
+        enabled: Option<bool>,
+    ) -> GatewayResult<ProfileRecord> {
+        if let Some(models) = allowed_models {
+            validate_profile_models(models)?;
+        }
+        if let Some(Some(bid)) = budget_id
+            && self.get_budget(bid)?.is_none()
+        {
+            return Err(GatewayError::bad_request(format!(
+                "budget {bid} does not exist"
+            )));
+        }
+        let conn = self.lock()?;
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM profiles WHERE id = ?1",
+                params![profile_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !exists {
+            return Err(GatewayError::not_found(format!(
+                "profile {profile_id} not found"
+            )));
+        }
+        let tx = conn.unchecked_transaction()?;
+        if let Some(n) = name {
+            let n = n.trim();
+            if n.is_empty() {
+                return Err(GatewayError::bad_request("name is required"));
+            }
+            tx.execute(
+                "UPDATE profiles SET name = ?1 WHERE id = ?2",
+                params![n, profile_id],
+            )?;
+        }
+        if let Some(d) = description {
+            tx.execute(
+                "UPDATE profiles SET description = ?1 WHERE id = ?2",
+                params![d, profile_id],
+            )?;
+        }
+        if let Some(e) = enabled {
+            tx.execute(
+                "UPDATE profiles SET enabled = ?1 WHERE id = ?2",
+                params![i32::from(e), profile_id],
+            )?;
+        }
+        if let Some(effort) = max_reasoning_effort {
+            tx.execute(
+                "UPDATE profiles SET max_reasoning_effort = ?1 WHERE id = ?2",
+                params![effort, profile_id],
+            )?;
+        }
+        if let Some(b) = budget_id {
+            tx.execute(
+                "UPDATE profiles SET budget_id = ?1 WHERE id = ?2",
+                params![b, profile_id],
+            )?;
+            let next_reset = b.map(|bid| compute_next_reset_tx(&tx, bid)).transpose()?;
+            tx.execute(
+                "UPDATE users SET budget_id = ?1, next_budget_reset_at = ?2 WHERE profile_id = ?3",
+                params![b, next_reset, profile_id],
+            )?;
+        }
+        if let Some(models) = allowed_models {
+            tx.execute(
+                "DELETE FROM profile_models WHERE profile_id = ?1",
+                params![profile_id],
+            )?;
+            for pattern in models {
+                tx.execute(
+                    "INSERT INTO profile_models (profile_id, model_pattern) VALUES (?1, ?2)",
+                    params![profile_id, pattern],
+                )?;
+            }
+        }
+        tx.commit()?;
+        drop(conn);
+        self.get_profile(profile_id)?
+            .ok_or_else(|| GatewayError::not_found(format!("profile {profile_id} not found")))
+    }
+
+    pub fn delete_profile(&self, profile_id: &str) -> GatewayResult<u32> {
+        let conn = self.lock()?;
+        let tx = conn.unchecked_transaction()?;
+        let users_cleared = tx.execute(
+            "UPDATE users SET profile_id = NULL, budget_id = NULL, next_budget_reset_at = NULL WHERE profile_id = ?1",
+            params![profile_id],
+        )? as u32;
+        let deleted = tx.execute("DELETE FROM profiles WHERE id = ?1", params![profile_id])?;
+        if deleted == 0 {
+            return Err(GatewayError::not_found(format!(
+                "profile {profile_id} not found"
+            )));
+        }
+        tx.commit()?;
+        Ok(users_cleared)
+    }
+
+    /// Enabled profile for a user, if assigned.
+    pub fn enabled_profile_for_user(
+        &self,
+        user_id: &str,
+    ) -> GatewayResult<Option<ProfileRecord>> {
+        let conn = self.lock()?;
+        let profile_id: Option<String> = conn
+            .query_row(
+                "SELECT profile_id FROM users WHERE id = ?1",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let Some(pid) = profile_id else {
+            return Ok(None);
+        };
+        let profile = self.load_profile_in_conn(&conn, &pid)?;
+        Ok(profile.filter(|p| p.enabled))
+    }
+
+    fn load_profile_in_conn(
+        &self,
+        conn: &Connection,
+        profile_id: &str,
+    ) -> GatewayResult<Option<ProfileRecord>> {
+        let Some((
+            id,
+            name,
+            description,
+            budget_id,
+            max_reasoning_effort,
+            enabled,
+            created_at,
+        )) = conn
+            .query_row(
+                "SELECT id, name, description, budget_id, max_reasoning_effort, enabled, created_at FROM profiles WHERE id = ?1",
+                params![profile_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i32>(5)? != 0,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let allowed_models = self.list_profile_models_in_conn(conn, &id)?;
+        let user_count = self.count_profile_users_in_conn(conn, &id)?;
+        Ok(Some(ProfileRecord {
+            id,
+            name,
+            description,
+            budget_id,
+            max_reasoning_effort,
+            enabled,
+            allowed_models,
+            user_count,
+            created_at,
+        }))
+    }
+
+    fn list_profile_models_in_conn(
+        &self,
+        conn: &Connection,
+        profile_id: &str,
+    ) -> GatewayResult<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT model_pattern FROM profile_models WHERE profile_id = ?1 ORDER BY model_pattern",
+        )?;
+        let rows = stmt.query_map(params![profile_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn count_profile_users_in_conn(
+        &self,
+        conn: &Connection,
+        profile_id: &str,
+    ) -> GatewayResult<u32> {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE profile_id = ?1",
+            params![profile_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as u32)
     }
 
     pub fn create_api_key(
@@ -618,13 +989,11 @@ impl Database {
             let json = match meta {
                 None => None,
                 Some(value) => {
-                    let existing: Option<String> = tx
-                        .query_row(
-                            "SELECT metadata_json FROM api_keys WHERE id = ?1",
-                            params![key_id],
-                            |row| row.get(0),
-                        )
-                        .optional()?;
+                    let existing: Option<String> = tx.query_row(
+                        "SELECT metadata_json FROM api_keys WHERE id = ?1",
+                        params![key_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )?;
                     let merged = merge_metadata_json(existing.as_deref(), &value);
                     Some(
                         serde_json::to_string(&merged)
@@ -936,7 +1305,12 @@ fn run_migrations(conn: &Connection) -> GatewayResult<()> {
     }
     if version < 2 {
         conn.execute_batch(MIGRATION_V2)?;
-        conn.pragma_update(None, "user_version", 2)?;
+        version = 2;
+        conn.pragma_update(None, "user_version", version)?;
+    }
+    if version < 3 {
+        conn.execute_batch(MIGRATION_V3)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
 }
@@ -968,6 +1342,15 @@ fn compute_next_reset(conn: &Connection, budget_id: &str) -> GatewayResult<Strin
     Ok((chrono::Utc::now() + chrono::Duration::seconds(duration_sec)).to_rfc3339())
 }
 
+fn compute_next_reset_tx(tx: &Transaction<'_>, budget_id: &str) -> GatewayResult<String> {
+    let duration_sec: i64 = tx.query_row(
+        "SELECT duration_sec FROM budgets WHERE id = ?1",
+        params![budget_id],
+        |row| row.get(0),
+    )?;
+    Ok((chrono::Utc::now() + chrono::Duration::seconds(duration_sec)).to_rfc3339())
+}
+
 fn insert_usage_tx(
     tx: &Transaction<'_>,
     key_id: Option<&str>,
@@ -992,10 +1375,25 @@ fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
         id: row.get(0)?,
         alias: row.get(1)?,
         budget_id: row.get(2)?,
-        spend: row.get(3)?,
-        next_budget_reset_at: row.get(4)?,
-        created_at: row.get(5)?,
+        profile_id: row.get(3)?,
+        spend: row.get(4)?,
+        next_budget_reset_at: row.get(5)?,
+        created_at: row.get(6)?,
     })
+}
+
+fn validate_profile_models(allowed_models: &[String]) -> GatewayResult<()> {
+    if allowed_models.is_empty() {
+        return Err(GatewayError::bad_request(
+            "allowed_models must contain at least one pattern",
+        ));
+    }
+    if allowed_models.len() > MAX_PROFILE_MODELS {
+        return Err(GatewayError::bad_request(format!(
+            "allowed_models is limited to {MAX_PROFILE_MODELS} patterns"
+        )));
+    }
+    Ok(())
 }
 
 fn map_budget(row: &rusqlite::Row<'_>) -> rusqlite::Result<BudgetRecord> {
@@ -1074,6 +1472,30 @@ mod tests {
     }
 
     #[test]
+    fn update_api_key_merges_metadata_when_existing_is_null() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("test.db")).unwrap();
+        db.create_user("user-1", None, None).unwrap();
+        let key = db
+            .create_api_key(Some("k1"), "user-1", &["openai:*".into()], None, None)
+            .unwrap();
+        let updated = db
+            .update_api_key(
+                &key.id,
+                None,
+                Some(&["openai:*".into(), "anthropic:*".into()]),
+                None,
+                Some(Some(serde_json::json!({ "max_reasoning_effort": "medium" }))),
+            )
+            .unwrap();
+        assert!(updated.allowed_models.contains(&"openai:*".to_string()));
+        assert!(updated.allowed_models.contains(&"anthropic:*".to_string()));
+        let meta: serde_json::Value =
+            serde_json::from_str(updated.metadata_json.as_deref().unwrap()).unwrap();
+        assert_eq!(meta["max_reasoning_effort"], "medium");
+    }
+
+    #[test]
     fn delete_user_removes_keys() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
@@ -1093,7 +1515,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(dir.path().join("test.db")).unwrap();
         let budget = db.create_budget(10.0, 86_400, true).unwrap();
-        db.create_user("user-1", None, Some(&budget.id)).unwrap();
+        let profile = db
+            .create_profile(
+                "budgeted",
+                None,
+                &["openai:*".into()],
+                Some(&budget.id),
+                None,
+                true,
+            )
+            .unwrap();
+        db.create_user("user-1", None, Some(&profile.id)).unwrap();
         db.record_usage(None, "user-1", "openai:gpt-4o-mini", 10, 5, 0.25, "req-1")
             .unwrap();
         let before = db.get_user("user-1").unwrap().unwrap();
@@ -1116,7 +1548,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(dir.path().join("test.db")).unwrap();
         let budget = db.create_budget(10.0, 86_400, true).unwrap();
-        db.create_user("user-1", None, Some(&budget.id)).unwrap();
+        let profile = db
+            .create_profile(
+                "budgeted",
+                None,
+                &["openai:*".into()],
+                Some(&budget.id),
+                None,
+                true,
+            )
+            .unwrap();
+        db.create_user("user-1", None, Some(&profile.id)).unwrap();
         db.record_usage(None, "user-1", "openai:gpt-4o-mini", 10, 5, 0.25, "req-1")
             .unwrap();
         {
@@ -1141,5 +1583,81 @@ mod tests {
             db.list_budget_reset_logs(Some("user-1"), 10).unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn profile_assign_sets_user_budget_and_key_can_inherit() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("test.db")).unwrap();
+        let budget = db.create_budget(25.0, 86_400, true).unwrap();
+        let profile = db
+            .create_profile(
+                "default",
+                Some("Default profile"),
+                &["openai:*".into(), "anthropic:*".into()],
+                Some(&budget.id),
+                Some("medium"),
+                true,
+            )
+            .unwrap();
+        let user = db
+            .create_user("user-1", Some("Alice"), Some(&profile.id))
+            .unwrap();
+        assert_eq!(user.profile_id.as_deref(), Some(profile.id.as_str()));
+        assert_eq!(user.budget_id.as_deref(), Some(budget.id.as_str()));
+
+        let inherited = db.enabled_profile_for_user("user-1").unwrap().unwrap();
+        assert_eq!(inherited.allowed_models, profile.allowed_models);
+        assert_eq!(inherited.max_reasoning_effort.as_deref(), Some("medium"));
+
+        let budget2 = db.create_budget(50.0, 86_400, true).unwrap();
+        db.update_profile(
+            &profile.id,
+            None,
+            None,
+            None,
+            Some(Some(budget2.id.as_str())),
+            None,
+            None,
+        )
+        .unwrap();
+        let after = db.get_user("user-1").unwrap().unwrap();
+        assert_eq!(after.budget_id.as_deref(), Some(budget2.id.as_str()));
+
+        let cleared = db.delete_profile(&profile.id).unwrap();
+        assert_eq!(cleared, 1);
+        let cleared_user = db.get_user("user-1").unwrap().unwrap();
+        assert!(cleared_user.profile_id.is_none());
+        assert!(cleared_user.budget_id.is_none());
+        assert!(db.enabled_profile_for_user("user-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn profile_crud_list_and_disabled_reject() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("test.db")).unwrap();
+        let created = db
+            .create_profile(
+                "team",
+                None,
+                &["openai:*".into()],
+                None,
+                None,
+                true,
+            )
+            .unwrap();
+        let listed = db.list_profiles().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, created.id);
+        assert_eq!(listed[0].user_count, 0);
+
+        db.update_profile(&created.id, Some("team-v2"), None, None, None, None, Some(false))
+            .unwrap();
+        let disabled = db.get_profile(&created.id).unwrap().unwrap();
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.name, "team-v2");
+
+        let err = db.create_user("u1", None, Some(&created.id)).unwrap_err();
+        assert!(err.to_string().contains("disabled"));
     }
 }

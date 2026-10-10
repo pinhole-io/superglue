@@ -4,8 +4,8 @@ import type {
   CaptureStatus,
   CreateKeyResponse,
   GatewayBudget,
-  GatewayCatalog,
   GatewayKey,
+  GatewayProfile,
   GatewayProviderStatus,
   GatewayUsage,
   GatewayUser,
@@ -70,18 +70,53 @@ export const api = {
   },
   models: () => request<{ data: { id: string }[] }>('/v1/models'),
   users: () => request<{ users: GatewayUser[] }>('/v1/users'),
-  createUser: (body: { user_id: string; alias?: string; budget_id?: string }) =>
-    request<GatewayUser>('/v1/users', { method: 'POST', body: JSON.stringify(body) }),
-  updateUser: (id: string, body: { alias?: string; budget_id?: string | null }) =>
+  createUser: (body: {
+    user_id: string
+    alias?: string
+    profile_id?: string
+  }) => request<GatewayUser>('/v1/users', { method: 'POST', body: JSON.stringify(body) }),
+  updateUser: (id: string, body: {
+    alias?: string
+    profile_id?: string | null
+  }) =>
     request<GatewayUser>(`/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteUser: (id: string) =>
     request<{ deleted: string; keys_deleted: number }>(`/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  profiles: () => request<{ profiles: GatewayProfile[] }>('/v1/profiles'),
+  createProfile: (body: {
+    name: string
+    description?: string
+    allowed_models: string[]
+    budget_id?: string
+    max_reasoning_effort?: string
+    enabled?: boolean
+  }) => request<GatewayProfile>('/v1/profiles', { method: 'POST', body: JSON.stringify(body) }),
+  updateProfile: (
+    id: string,
+    body: {
+      name?: string
+      description?: string | null
+      allowed_models?: string[]
+      budget_id?: string | null
+      max_reasoning_effort?: string | null
+      enabled?: boolean
+    },
+  ) =>
+    request<GatewayProfile>(`/v1/profiles/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteProfile: (id: string) =>
+    request<{ deleted: string; users_cleared: number }>(`/v1/profiles/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
   keys: () => request<{ keys: GatewayKey[] }>('/v1/keys'),
   createKey: (body: {
     user_id: string
-    allowed_models: string[]
+    allowed_models?: string[]
     name?: string
     expires_at?: string
+    metadata?: Record<string, unknown>
   }) => request<CreateKeyResponse>('/v1/keys', { method: 'POST', body: JSON.stringify(body) }),
   updateKey: (
     id: string,
@@ -109,6 +144,8 @@ export const api = {
     to?: string
     group_by?: string
   }) => request<UsageSummary>(`/v1/usage/summary${query(params)}`),
+  deleteZeroCostUsage: () =>
+    request<{ deleted: number }>('/v1/usage/zero-cost', { method: 'DELETE' }),
   budgetResets: (params: { user_id?: string; limit?: number }) =>
     request<{ resets: BudgetResetLog[] }>(`/v1/budget-resets${query(params)}`),
   providers: () => request<{ providers: GatewayProviderStatus[] }>('/v1/providers'),
@@ -125,5 +162,3 @@ export const api = {
   captureRecord: (requestId: string, params?: { from?: string; to?: string }) =>
     request<CaptureRecordDetail>(`/v1/capture/records/${encodeURIComponent(requestId)}${query(params ?? {})}`),
 }
-
-export type { GatewayCatalog }

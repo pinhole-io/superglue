@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
-import { GatewayNavButton } from '../../components/agent/gatewayNav'
+import { LinkButton } from '../../components/AppShell'
 import { userLabel } from '../../components/compactDisplay'
+import { InfoTip } from '../../components/InfoTip'
+import { PageHeader } from '../../components/PageHeader'
 import type { CaptureStatus, GatewayUser } from '../../types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -31,32 +33,69 @@ export function GatewayCapturePage() {
   useEffect(() => { load() }, [])
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Gateway capture</h2>
-        <GatewayNavButton capture={{ name: 'records' }}>Browse records</GatewayNavButton>
-      </div>
+    <>
+      <PageHeader
+        title="Capture"
+        description="Request capture status and spool health. Settings come from gateway environment variables."
+        actions={<LinkButton route={{ name: 'capture-records' }}>Browse records</LinkButton>}
+      />
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       {!status && !error && <div className="p-4 text-sm text-muted-foreground">Loading capture status…</div>}
       {status && !status.enabled && (
-        <Alert><AlertDescription>Capture is disabled on the gateway. Set <code>SUPERGLUE_CAPTURE_S3_BUCKET</code> and redeploy with the <code>capture</code> feature, then restart the gateway.</AlertDescription></Alert>
+        <Alert>
+          <AlertDescription>
+            Capture is disabled on the gateway. Set <code>SUPERGLUE_CAPTURE_S3_BUCKET</code> and redeploy with the{' '}
+            <code>capture</code> feature, then restart the gateway.
+          </AlertDescription>
+        </Alert>
       )}
       {status?.enabled && status.stats && (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Status</div><div className="font-semibold">Enabled</div></CardContent></Card>
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Dropped records</div><div className="font-mono font-semibold">{status.stats.dropped_records.toLocaleString()}</div></CardContent></Card>
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Pending spool files</div><div className="font-mono font-semibold">{status.stats.pending_spool_files}</div></CardContent></Card>
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Pending spool size</div><div className="font-mono font-semibold">{formatBytes(status.stats.pending_spool_bytes)}</div></CardContent></Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground">Status</div>
+              <div className="font-semibold">Enabled</div>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                Dropped records
+                <InfoTip label="Dropped records">
+                  Records dropped when the capture writer fell behind. Increase spool throughput or reduce traffic.
+                </InfoTip>
+              </div>
+              <div className="font-mono font-semibold">{status.stats.dropped_records.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground">Pending spool files</div>
+              <div className="font-mono font-semibold">{status.stats.pending_spool_files}</div>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground">Pending spool size</div>
+              <div className="font-mono font-semibold">{formatBytes(status.stats.pending_spool_bytes)}</div>
+            </CardContent>
+          </Card>
         </div>
       )}
       {status?.stats && status.stats.dropped_records > 0 && (
-        <Alert variant="destructive"><AlertDescription>{status.stats.dropped_records.toLocaleString()} records were dropped because the capture writer fell behind. Consider increasing spool throughput or reducing traffic.</AlertDescription></Alert>
+        <Alert variant="destructive">
+          <AlertDescription>
+            {status.stats.dropped_records.toLocaleString()} records were dropped because the capture writer fell behind.
+          </AlertDescription>
+        </Alert>
       )}
       {status?.config && (
         <Card>
           <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
           <CardContent className="grid gap-3">
-            <p className="m-0 text-sm text-muted-foreground">Capture settings are read from gateway environment variables. Changing them requires a gateway restart.</p>
+            <p className="m-0 text-sm text-muted-foreground">
+              Capture settings are read from gateway environment variables. Changing them requires a gateway restart.
+            </p>
             <dl className="grid gap-2 text-sm sm:grid-cols-2">
               <ConfigRow label="S3 bucket" value={status.config.s3_bucket} mono />
               <ConfigRow label="S3 prefix" value={status.config.s3_prefix} mono />
@@ -67,16 +106,30 @@ export function GatewayCapturePage() {
               <ConfigRow label="Channel capacity" value={String(status.stats?.channel_capacity ?? '—')} />
               <ConfigRow label="AWS region" value={status.config.aws_region ?? '—'} />
               <ConfigRow label="S3 endpoint" value={status.config.s3_endpoint ?? 'default'} mono />
-              <ConfigRow label="Excluded users" value={status.config.exclude_users.length === 0 ? '—' : status.config.exclude_users.map((id) => userLabel(users.find((user) => user.id === id), id)).join(', ')} />
+              <ConfigRow
+                label="Excluded users"
+                value={
+                  status.config.exclude_users.length === 0
+                    ? '—'
+                    : status.config.exclude_users
+                        .map((id) => userLabel(users.find((user) => user.id === id), id))
+                        .join(', ')
+                }
+              />
             </dl>
             <Button className="w-fit" onClick={load}>Refresh</Button>
           </CardContent>
         </Card>
       )}
-    </div>
+    </>
   )
 }
 
 function ConfigRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return <div className="rounded-md border border-border p-2"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={mono ? 'mt-1 break-all font-mono text-xs' : 'mt-1'}>{value}</dd></div>
+  return (
+    <div>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={mono ? 'font-mono m-0' : 'm-0'}>{value}</dd>
+    </div>
+  )
 }

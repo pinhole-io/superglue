@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { compactTime, keyLabel, shortId, userLabel } from '../../components/compactDisplay'
+import { FamilyBadge } from '../../components/FamilyBadge'
 import { KeySelect, UserSelect } from '../../components/GatewayEntitySelect'
+import { InfoTip } from '../../components/InfoTip'
+import { PageHeader } from '../../components/PageHeader'
 import { PaginatedTable } from '../../components/PaginatedTable'
 import type { GatewayKey, GatewayUsage, GatewayUser, UsageSummary } from '../../types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -18,9 +29,11 @@ export function GatewayUsagePage() {
   const [users, setUsers] = useState<GatewayUser[]>([])
   const [keys, setKeys] = useState<GatewayKey[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [userId, setUserId] = useState('')
   const [keyId, setKeyId] = useState('')
   const [limit, setLimit] = useState(100)
+  const [confirmZero, setConfirmZero] = useState(false)
 
   const userById = Object.fromEntries(users.map((user) => [user.id, user]))
   const keyById = Object.fromEntries(keys.map((key) => [key.id, key]))
@@ -63,23 +76,69 @@ export function GatewayUsagePage() {
     if (selected) setUserId(selected.user_id)
   }
 
+  const deleteZeroCost = async () => {
+    try {
+      const result = await api.deleteZeroCostUsage()
+      setConfirmZero(false)
+      setNotice(`Deleted ${result.deleted} zero-cost usage row(s).`)
+      load()
+    } catch (e) {
+      setError(String(e))
+      setConfirmZero(false)
+    }
+  }
+
   return (
-    <div className="grid gap-3">
-      <h2 className="text-lg font-semibold">Gateway usage</h2>
+    <>
+      <PageHeader
+        title="Usage"
+        description="Token and cost logs attributed to users and keys."
+        actions={
+          <span className="inline-flex items-center gap-2">
+            <Button type="button" variant="outline" onClick={() => setConfirmZero(true)}>
+              Delete $0.00 rows
+            </Button>
+            <InfoTip label="Delete zero-cost rows">
+              Removes rows the gateway could not price. Useful after unknown-model traffic.
+            </InfoTip>
+          </span>
+        }
+      />
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+      {notice && <Alert><AlertDescription>{notice}</AlertDescription></Alert>}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3">
           <UserSelect id="usage-user" users={users} value={userId} onChange={selectUser} allowAll />
           <KeySelect id="usage-key" keys={keys} users={users} userId={userId} value={keyId} onChange={selectKey} />
-          <div className="grid w-24 gap-1.5"><Label htmlFor="usage-limit">Limit</Label><Input id="usage-limit" type="number" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /></div>
+          <div className="grid w-24 gap-1.5">
+            <Label htmlFor="usage-limit">Limit</Label>
+            <Input id="usage-limit" type="number" value={limit} onChange={(e) => setLimit(Number(e.target.value))} />
+          </div>
           <Button onClick={load}>Refresh</Button>
         </CardContent>
       </Card>
       {summary && (
         <div className="grid gap-2 sm:grid-cols-3">
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Total cost</div><div className="font-mono text-base font-semibold">${summary.totals.cost_usd.toFixed(4)}</div></CardContent></Card>
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Requests</div><div className="font-mono text-base font-semibold">{summary.totals.requests}</div></CardContent></Card>
-          <Card size="sm"><CardContent><div className="text-xs text-muted-foreground">Tokens</div><div className="font-mono text-base font-semibold">{(summary.totals.prompt_tokens + summary.totals.completion_tokens).toLocaleString()}</div></CardContent></Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground">Total cost</div>
+              <div className="font-mono text-base font-semibold">${summary.totals.cost_usd.toFixed(4)}</div>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground">Requests</div>
+              <div className="font-mono text-base font-semibold">{summary.totals.requests}</div>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent>
+              <div className="text-xs text-muted-foreground">Tokens</div>
+              <div className="font-mono text-base font-semibold">
+                {(summary.totals.prompt_tokens + summary.totals.completion_tokens).toLocaleString()}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
       {byModel && byModel.groups.length > 0 && (
@@ -87,10 +146,24 @@ export function GatewayUsagePage() {
           <CardHeader><CardTitle>By model</CardTitle></CardHeader>
           <CardContent>
             <Table>
-              <TableHeader><TableRow><TableHead>Model</TableHead><TableHead>Requests</TableHead><TableHead>Cost</TableHead></TableRow></TableHeader>
-              <TableBody>{byModel.groups.slice(0, 10).map((g) => (
-                <TableRow key={g.key}><TableCell title={g.key}>{g.key}</TableCell><TableCell>{g.requests}</TableCell><TableCell>${g.cost_usd.toFixed(4)}</TableCell></TableRow>
-              ))}</TableBody>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Family</TableHead>
+                  <TableHead>Requests</TableHead>
+                  <TableHead>Cost</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {byModel.groups.slice(0, 20).map((g) => (
+                  <TableRow key={g.key}>
+                    <TableCell title={g.key}>{g.key}</TableCell>
+                    <TableCell><FamilyBadge id={g.key} /></TableCell>
+                    <TableCell>{g.requests}</TableCell>
+                    <TableCell>${g.cost_usd.toFixed(4)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
             </Table>
           </CardContent>
         </Card>
@@ -109,25 +182,62 @@ export function GatewayUsagePage() {
       >
         {(pageRows) => (
           <Table>
-            <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>User</TableHead><TableHead>Key</TableHead><TableHead>Model</TableHead><TableHead>Tokens</TableHead><TableHead>Cost</TableHead><TableHead>Request ID</TableHead></TableRow></TableHeader>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>User</TableHead>
+                <TableHead>Key</TableHead>
+                <TableHead>Model</TableHead>
+                <TableHead>Family</TableHead>
+                <TableHead>Tokens</TableHead>
+                <TableHead>Cost</TableHead>
+                <TableHead>Request ID</TableHead>
+              </TableRow>
+            </TableHeader>
             <TableBody>
               {pageRows.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">No usage records.</TableCell></TableRow>
-              ) : pageRows.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="font-mono" title={u.created_at}>{compactTime(u.created_at)}</TableCell>
-                  <TableCell title={u.user_id}>{userLabel(userById[u.user_id], u.user_id)}</TableCell>
-                  <TableCell title={u.key_id ?? undefined}>{u.key_id ? keyLabel(keyById[u.key_id], u.key_id) : '—'}</TableCell>
-                  <TableCell title={u.model}>{u.model}</TableCell>
-                  <TableCell>{u.prompt_tokens}+{u.completion_tokens}</TableCell>
-                  <TableCell>${u.cost_usd.toFixed(4)}</TableCell>
-                  <TableCell className="font-mono" title={u.request_id ?? undefined}>{u.request_id ? shortId(u.request_id) : '—'}</TableCell>
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                    No usage records.
+                  </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                pageRows.map((u) => (
+                  <TableRow key={u.id}>
+                    <TableCell className="font-mono" title={u.created_at}>{compactTime(u.created_at)}</TableCell>
+                    <TableCell title={u.user_id}>{userLabel(userById[u.user_id], u.user_id)}</TableCell>
+                    <TableCell title={u.key_id ?? undefined}>
+                      {u.key_id ? keyLabel(keyById[u.key_id], u.key_id) : '—'}
+                    </TableCell>
+                    <TableCell title={u.model}>{u.model}</TableCell>
+                    <TableCell><FamilyBadge id={u.model} /></TableCell>
+                    <TableCell>{u.prompt_tokens}+{u.completion_tokens}</TableCell>
+                    <TableCell>${u.cost_usd.toFixed(4)}</TableCell>
+                    <TableCell className="font-mono" title={u.request_id ?? undefined}>
+                      {u.request_id ? shortId(u.request_id) : '—'}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         )}
       </PaginatedTable>
-    </div>
+
+      <Dialog open={confirmZero} onOpenChange={setConfirmZero}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete $0.00 usage rows</DialogTitle>
+            <DialogDescription>
+              This removes rows the gateway could not price. Filtered views are ignored; the delete is global.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmZero(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={deleteZeroCost}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

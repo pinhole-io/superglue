@@ -506,12 +506,32 @@ async fn budget_enforce_returns_429() {
         .unwrap()
         .to_string();
 
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "enforced",
+                "allowed_models": ["openai:*"],
+                "budget_id": budget_id,
+                "enabled": true
+            })),
+        ))
+        .await
+        .unwrap();
+    let profile_id = body_to_json(profile.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
     app.clone()
         .oneshot(auth_request(
             "POST",
             "/v1/users",
             MASTER_KEY,
-            Some(json!({ "user_id": "user-1", "budget_id": budget_id })),
+            Some(json!({ "user_id": "user-1", "profile_id": profile_id })),
         ))
         .await
         .unwrap();
@@ -696,7 +716,7 @@ async fn health_endpoints_work() {
 }
 
 #[tokio::test]
-async fn update_user_budget_does_not_deadlock() {
+async fn update_user_profile_does_not_deadlock() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(MASTER_KEY, &dir.path().join("gw.db"));
     let app = router(state);
@@ -727,18 +747,40 @@ async fn update_user_budget_does_not_deadlock() {
         .unwrap()
         .to_string();
 
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "team",
+                "allowed_models": ["openai:*"],
+                "budget_id": budget_id,
+                "enabled": true
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(profile.status(), StatusCode::OK);
+    let profile_id = body_to_json(profile.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
     let update = app
         .clone()
         .oneshot(auth_request(
             "PATCH",
             "/v1/users/budget-user",
             MASTER_KEY,
-            Some(json!({ "budget_id": budget_id })),
+            Some(json!({ "profile_id": profile_id })),
         ))
         .await
         .unwrap();
     assert_eq!(update.status(), StatusCode::OK);
     let user = body_to_json(update.into_body()).await;
+    assert_eq!(user["profile_id"].as_str(), Some(profile_id.as_str()));
     assert_eq!(user["budget_id"].as_str(), Some(budget_id.as_str()));
     assert_eq!(user["alias"].as_str(), Some("Budget User"));
 
@@ -977,6 +1019,192 @@ async fn remote_client_admin_commands() {
 }
 
 #[tokio::test]
+async fn profile_crud_budget_sync_and_key_inheritance() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(MASTER_KEY, &dir.path().join("profiles.db"));
+    let app = router(state);
+
+    let budget = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/budgets",
+            MASTER_KEY,
+            Some(json!({ "max_budget": 15.0, "duration_sec": 3600, "enforce": true })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(budget.status(), StatusCode::OK);
+    let budget_id = body_to_json(budget.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "default",
+                "allowed_models": ["openai:*", "anthropic:*"],
+                "budget_id": budget_id,
+                "max_reasoning_effort": "medium",
+                "enabled": true
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(profile.status(), StatusCode::OK);
+    let profile_body = body_to_json(profile.into_body()).await;
+    let profile_id = profile_body["id"].as_str().unwrap().to_string();
+    assert_eq!(profile_body["name"], "default");
+
+    let listed = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/profiles", MASTER_KEY, None))
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed_body = body_to_json(listed.into_body()).await;
+    assert_eq!(listed_body["profiles"].as_array().unwrap().len(), 1);
+
+    let user = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/users",
+            MASTER_KEY,
+            Some(json!({ "user_id": "profiled", "profile_id": profile_id })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(user.status(), StatusCode::OK);
+    let user_body = body_to_json(user.into_body()).await;
+    assert_eq!(user_body["profile_id"], profile_id);
+    assert_eq!(user_body["budget_id"], budget_id);
+
+    let budget2 = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/budgets",
+            MASTER_KEY,
+            Some(json!({ "max_budget": 40.0, "duration_sec": 3600, "enforce": true })),
+        ))
+        .await
+        .unwrap();
+    let budget2_id = body_to_json(budget2.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let patched = app
+        .clone()
+        .oneshot(auth_request(
+            "PATCH",
+            &format!("/v1/profiles/{profile_id}"),
+            MASTER_KEY,
+            Some(json!({ "budget_id": budget2_id })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(patched.status(), StatusCode::OK);
+
+    let users = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/users", MASTER_KEY, None))
+        .await
+        .unwrap();
+    let users_body = body_to_json(users.into_body()).await;
+    let profiled = users_body["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "profiled")
+        .unwrap();
+    assert_eq!(profiled["budget_id"], budget2_id);
+
+    let inherited_key = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({ "user_id": "profiled", "name": "from-profile" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(inherited_key.status(), StatusCode::OK);
+    let inherited_body = body_to_json(inherited_key.into_body()).await;
+    let models = inherited_body["allowed_models"].as_array().unwrap();
+    assert!(models.iter().any(|m| m == "openai:*"));
+    assert!(models.iter().any(|m| m == "anthropic:*"));
+
+    let keys = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/keys", MASTER_KEY, None))
+        .await
+        .unwrap();
+    let keys_body = body_to_json(keys.into_body()).await;
+    let key = keys_body["keys"].as_array().unwrap()[0].clone();
+    let meta: serde_json::Value =
+        serde_json::from_str(key["metadata_json"].as_str().unwrap()).unwrap();
+    assert_eq!(meta["max_reasoning_effort"], "medium");
+
+    let explicit_key = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({
+                "user_id": "profiled",
+                "name": "explicit",
+                "allowed_models": ["openai:gpt-4o-mini"]
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(explicit_key.status(), StatusCode::OK);
+    let explicit_body = body_to_json(explicit_key.into_body()).await;
+    assert_eq!(
+        explicit_body["allowed_models"],
+        json!(["openai:gpt-4o-mini"])
+    );
+
+    let deleted = app
+        .clone()
+        .oneshot(auth_request(
+            "DELETE",
+            &format!("/v1/profiles/{profile_id}"),
+            MASTER_KEY,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let deleted_body = body_to_json(deleted.into_body()).await;
+    assert_eq!(deleted_body["users_cleared"].as_u64(), Some(1));
+
+    let users_after = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/users", MASTER_KEY, None))
+        .await
+        .unwrap();
+    let users_after_body = body_to_json(users_after.into_body()).await;
+    let profiled_after = users_after_body["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "profiled")
+        .unwrap();
+    assert!(profiled_after["profile_id"].is_null());
+    assert!(profiled_after["budget_id"].is_null());
+}
+
+#[tokio::test]
 async fn budget_update_and_delete_via_admin_api() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(MASTER_KEY, &dir.path().join("budget-crud.db"));
@@ -1013,13 +1241,34 @@ async fn budget_update_and_delete_via_admin_api() {
     assert_eq!(updated_body["max_budget"].as_f64(), Some(20.0));
     assert_eq!(updated_body["enforce"].as_bool(), Some(false));
 
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "assignee",
+                "allowed_models": ["openai:*"],
+                "budget_id": budget_id,
+                "enabled": true
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(profile.status(), StatusCode::OK);
+    let profile_id = body_to_json(profile.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
     let user = app
         .clone()
         .oneshot(auth_request(
             "POST",
             "/v1/users",
             MASTER_KEY,
-            Some(json!({ "user_id": "budget-assignee", "budget_id": budget_id })),
+            Some(json!({ "user_id": "budget-assignee", "profile_id": profile_id })),
         ))
         .await
         .unwrap();
@@ -1041,7 +1290,7 @@ async fn budget_update_and_delete_via_admin_api() {
 }
 
 #[tokio::test]
-async fn user_budget_can_be_cleared_with_null() {
+async fn clearing_user_profile_clears_budget() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(MASTER_KEY, &dir.path().join("budget-clear.db"));
     let app = router(state);
@@ -1061,12 +1310,32 @@ async fn user_budget_can_be_cleared_with_null() {
         .unwrap()
         .to_string();
 
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "clear-me",
+                "allowed_models": ["openai:*"],
+                "budget_id": budget_id,
+                "enabled": true
+            })),
+        ))
+        .await
+        .unwrap();
+    let profile_id = body_to_json(profile.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
     app.clone()
         .oneshot(auth_request(
             "POST",
             "/v1/users",
             MASTER_KEY,
-            Some(json!({ "user_id": "u-clear", "budget_id": budget_id })),
+            Some(json!({ "user_id": "u-clear", "profile_id": profile_id })),
         ))
         .await
         .unwrap();
@@ -1077,12 +1346,13 @@ async fn user_budget_can_be_cleared_with_null() {
             "PATCH",
             "/v1/users/u-clear",
             MASTER_KEY,
-            Some(json!({ "budget_id": null })),
+            Some(json!({ "profile_id": null })),
         ))
         .await
         .unwrap();
     assert_eq!(cleared.status(), StatusCode::OK);
     let body = body_to_json(cleared.into_body()).await;
+    assert!(body["profile_id"].is_null());
     assert!(body["budget_id"].is_null());
 }
 

@@ -13,8 +13,8 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
-      '/v1': { target: process.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8080', changeOrigin: true },
-      '/health': { target: process.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8080', changeOrigin: true },
+      '/v1': { target: process.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8082', changeOrigin: true },
+      '/health': { target: process.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8082', changeOrigin: true },
     },
   },
   build: { outDir: 'dist', emptyOutDir: true },

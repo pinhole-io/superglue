@@ -1,122 +1,3 @@
-export interface AdminMeta {
-  server_url: string
-  gateway_configured: boolean
-  gateway_url: string | null
-}
-
-export interface GatewayKeyMeta {
-  gateway_user_id: string
-  key_id: string
-  key_prefix: string
-}
-
-export interface AdminUser {
-  id: string
-  username: string
-  disabled: boolean
-  is_admin: boolean
-  created_at: string
-  allowed_models: string[]
-  use_server_default: boolean
-  model_profile_id: string | null
-  model_profile_name: string | null
-  effective_models: string[]
-  access_profile_id: string | null
-  access_profile_name: string | null
-  effective_access_profile_name: string
-  gateway_key: GatewayKeyMeta | null
-  has_password: boolean
-}
-
-export interface AccessProfile {
-  id: string
-  name: string
-  description: string
-  enabled: boolean
-  builtin: boolean
-  files: boolean
-  terminal: boolean
-  diff: boolean
-  codesearch: boolean
-  lsp: boolean
-  created_at: string
-  user_count: number
-}
-
-export interface ModelProfile {
-  id: string
-  name: string
-  description: string
-  allowed_models: string[]
-  enabled: boolean
-  budget_id: string | null
-  max_reasoning_effort: string | null
-  created_at: string
-  user_count: number
-}
-
-export interface GatewayCatalog {
-  configured: boolean
-  providers: { id: string; label: string; models: string[] }[]
-  defaults: string[]
-  error?: string | null
-}
-
-export interface AdminStatusSnapshot {
-  generated_at: string
-  users: AdminUserStatus[]
-  other_sessions: AdminSessionRow[]
-}
-
-export interface AdminUserStatus {
-  username: string
-  user_id: string
-  disabled: boolean
-  tunnel: 'connected' | 'disconnected'
-  forward_port: number | null
-  workspace_display: string | null
-  local_os_user: string | null
-  mount: 'none' | 'live' | 'stale'
-  sessions: AdminSessionRow[]
-}
-
-export interface AdminSessionRow {
-  id: string
-  kind: string
-  busy: boolean
-  persistent: boolean
-  in_memory: boolean
-  workspace_display: string | null
-}
-
-export interface ClientNotification {
-  id: string
-  level: string
-  title: string
-  body: string
-  expires_at: string | null
-  created_at: string
-}
-
-export interface ClientSettingsBody {
-  global_force_update: boolean
-  maintenance_enabled: boolean
-  maintenance_message: string
-  maintenance_until: string | null
-}
-
-export interface NotificationsPayload {
-  notifications: ClientNotification[]
-  client_settings: ClientSettingsBody
-  staged_releases: {
-    os: string
-    arch: string
-    label: string
-    version: string | null
-    sha256_prefix: string | null
-  }[]
-}
-
 export interface GatewayHealth {
   configured: boolean
   gateway_url: string | null
@@ -129,8 +10,21 @@ export interface GatewayUser {
   id: string
   alias: string | null
   budget_id: string | null
+  profile_id: string | null
   spend: number
   next_budget_reset_at: string | null
+  created_at: string
+}
+
+export interface GatewayProfile {
+  id: string
+  name: string
+  description: string | null
+  budget_id: string | null
+  max_reasoning_effort: string | null
+  enabled: boolean
+  allowed_models: string[]
+  user_count: number
   created_at: string
 }
 

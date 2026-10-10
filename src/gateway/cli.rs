@@ -120,6 +120,11 @@ pub enum GatewayCommand {
         #[command(subcommand)]
         command: BudgetCommand,
     },
+    /// Manage user profiles (models, budget, reasoning defaults).
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
     /// View usage logs.
     Usage {
         #[command(subcommand)]
@@ -142,9 +147,9 @@ pub enum UserCommand {
         /// Display name.
         #[arg(long)]
         alias: Option<String>,
-        /// Budget tier to assign.
+        /// Profile to assign (copies budget from the profile).
         #[arg(long)]
-        budget_id: Option<String>,
+        profile_id: Option<String>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
         output: OutputFormat,
     },
@@ -160,7 +165,7 @@ pub enum UserCommand {
         #[arg(long)]
         alias: Option<String>,
         #[arg(long)]
-        budget_id: Option<String>,
+        profile_id: Option<String>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
         output: OutputFormat,
     },
@@ -178,8 +183,8 @@ pub enum KeyCommand {
         /// User this key belongs to.
         #[arg(long)]
         user_id: String,
-        /// Allowed model pattern (repeatable, e.g. `openai:*`, `anthropic:claude-3`).
-        #[arg(long = "model", required = true)]
+        /// Allowed model pattern (repeatable). Omit to inherit from the user's enabled profile.
+        #[arg(long = "model")]
         models: Vec<String>,
         #[arg(long)]
         name: Option<String>,
@@ -254,6 +259,57 @@ pub enum BudgetCommand {
 }
 
 #[derive(Subcommand, Clone, Debug)]
+pub enum ProfileCommand {
+    /// Create a user profile.
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// Allowed model pattern (repeatable).
+        #[arg(long = "model", required = true)]
+        models: Vec<String>,
+        #[arg(long)]
+        budget_id: Option<String>,
+        #[arg(long)]
+        max_reasoning_effort: Option<String>,
+        #[arg(long, default_value_t = true)]
+        enabled: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        output: OutputFormat,
+    },
+    /// List profiles.
+    List {
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        output: OutputFormat,
+    },
+    /// Update a profile.
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long = "model")]
+        models: Vec<String>,
+        #[arg(long)]
+        budget_id: Option<String>,
+        #[arg(long)]
+        max_reasoning_effort: Option<String>,
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        output: OutputFormat,
+    },
+    /// Delete a profile (clears profile_id on assigned users).
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
 pub enum ModelCommand {
     /// List model patterns visible to an API key (master key or virtual key).
     List {
@@ -305,16 +361,21 @@ pub async fn execute(db_args: &DbArgs, command: GatewayCommand) -> Result<(), Ga
             #[cfg(feature = "capture")]
             capture_s3_prefix,
         } => {
-            let mut config = GatewayConfig::new(addr, db_args.db.clone(), master_key);
             #[cfg(feature = "capture")]
             {
+                let mut config = GatewayConfig::new(addr, db_args.db.clone(), master_key);
                 config.capture = crate::gateway::capture::CaptureConfig::from_serve_args(
                     &db_args.db,
                     capture_s3_bucket,
                     capture_s3_prefix,
                 );
+                return serve(config).await;
             }
-            serve(config).await
+            #[cfg(not(feature = "capture"))]
+            {
+                let config = GatewayConfig::new(addr, db_args.db.clone(), master_key);
+                serve(config).await
+            }
         }
         GatewayCommand::User { command } => {
             if db_args.url.is_some() {
@@ -335,6 +396,13 @@ pub async fn execute(db_args: &DbArgs, command: GatewayCommand) -> Result<(), Ga
                 run_budget_remote(db_args, command).await
             } else {
                 run_budget(&db_args.db, command)
+            }
+        }
+        GatewayCommand::Profile { command } => {
+            if db_args.url.is_some() {
+                run_profile_remote(db_args, command).await
+            } else {
+                run_profile(&db_args.db, command)
             }
         }
         GatewayCommand::Usage { command } => {
@@ -397,17 +465,20 @@ fn run_user(path: &PathBuf, command: UserCommand) -> GatewayResult<()> {
         UserCommand::Create {
             user_id,
             alias,
-            budget_id,
+            profile_id,
             output,
         } => {
-            let user = db.create_user(&user_id, alias.as_deref(), budget_id.as_deref())?;
+            let user = db.create_user(&user_id, alias.as_deref(), profile_id.as_deref())?;
             print_value(&user, output, |u| {
                 println!("Created user {} (spend ${:.4})", u.id, u.spend);
                 if let Some(a) = &u.alias {
                     println!("  alias: {a}");
                 }
+                if let Some(p) = &u.profile_id {
+                    println!("  profile_id: {p}");
+                }
                 if let Some(b) = &u.budget_id {
-                    println!("  budget_id: {b}");
+                    println!("  budget_id (from profile): {b}");
                 }
             });
         }
@@ -420,9 +491,10 @@ fn run_user(path: &PathBuf, command: UserCommand) -> GatewayResult<()> {
                 }
                 for u in users {
                     println!(
-                        "{}  spend=${:.4}  budget={}  alias={}",
+                        "{}  spend=${:.4}  profile={}  budget={}  alias={}",
                         u.id,
                         u.spend,
+                        u.profile_id.as_deref().unwrap_or("-"),
                         u.budget_id.as_deref().unwrap_or("-"),
                         u.alias.as_deref().unwrap_or("-"),
                     );
@@ -432,12 +504,12 @@ fn run_user(path: &PathBuf, command: UserCommand) -> GatewayResult<()> {
         UserCommand::Update {
             user_id,
             alias,
-            budget_id,
+            profile_id,
             output,
         } => {
             let alias_update = alias.as_ref().map(|a| Some(a.as_str()));
-            let budget_update = budget_id.as_ref().map(|b| Some(b.as_str()));
-            let user = db.update_user(&user_id, alias_update, budget_update)?;
+            let profile_update = profile_id.as_ref().map(|p| Some(p.as_str()));
+            let user = db.update_user(&user_id, alias_update, profile_update)?;
             print_value(&user, output, |u| {
                 println!("Updated user {}", u.id);
             });
@@ -460,19 +532,34 @@ fn run_key(path: &PathBuf, command: KeyCommand) -> GatewayResult<()> {
             expires_at,
             output,
         } => {
+            let mut allowed_models = models;
+            let mut metadata_json: Option<String> = None;
+            if allowed_models.is_empty() {
+                let Some(profile) = db.enabled_profile_for_user(&user_id)? else {
+                    return Err(GatewayError::bad_request(
+                        "allowed_models must contain at least one pattern (or assign an enabled profile to the user)",
+                    ));
+                };
+                allowed_models = profile.allowed_models;
+                if let Some(effort) = profile.max_reasoning_effort {
+                    metadata_json = Some(
+                        serde_json::json!({ "max_reasoning_effort": effort }).to_string(),
+                    );
+                }
+            }
             let result = db.create_api_key(
                 name.as_deref(),
                 &user_id,
-                &models,
+                &allowed_models,
                 expires_at.as_deref(),
-                None,
+                metadata_json.as_deref(),
             )?;
             let out = KeyCreateOutput {
                 id: result.id.clone(),
                 key: result.plaintext_key.clone(),
                 key_prefix: result.key_prefix.clone(),
                 user_id: user_id.clone(),
-                allowed_models: models.clone(),
+                allowed_models: allowed_models.clone(),
             };
             print_value(&out, output, |o| {
                 println!("Created API key (save the key — shown once):");
@@ -523,6 +610,94 @@ fn run_key(path: &PathBuf, command: KeyCommand) -> GatewayResult<()> {
         KeyCommand::Delete { id } => {
             db.delete_api_key(&id)?;
             println!("Deleted key {id}");
+        }
+    }
+    Ok(())
+}
+
+fn run_profile(path: &PathBuf, command: ProfileCommand) -> GatewayResult<()> {
+    let db = open_db(path)?;
+    match command {
+        ProfileCommand::Create {
+            name,
+            description,
+            models,
+            budget_id,
+            max_reasoning_effort,
+            enabled,
+            output,
+        } => {
+            let profile = db.create_profile(
+                &name,
+                description.as_deref(),
+                &models,
+                budget_id.as_deref(),
+                max_reasoning_effort.as_deref(),
+                enabled,
+            )?;
+            print_value(&profile, output, |p| {
+                println!(
+                    "Created profile {} ({})  models=[{}]  budget={}  reasoning={}  enabled={}",
+                    p.id,
+                    p.name,
+                    p.allowed_models.join(", "),
+                    p.budget_id.as_deref().unwrap_or("-"),
+                    p.max_reasoning_effort.as_deref().unwrap_or("-"),
+                    p.enabled,
+                );
+            });
+        }
+        ProfileCommand::List { output } => {
+            let profiles = db.list_profiles()?;
+            print_value(&profiles, output, |profiles| {
+                if profiles.is_empty() {
+                    println!("No profiles.");
+                    return;
+                }
+                for p in profiles {
+                    println!(
+                        "{}  {}  users={}  budget={}  models=[{}]  enabled={}",
+                        p.id,
+                        p.name,
+                        p.user_count,
+                        p.budget_id.as_deref().unwrap_or("-"),
+                        p.allowed_models.join(", "),
+                        p.enabled,
+                    );
+                }
+            });
+        }
+        ProfileCommand::Update {
+            id,
+            name,
+            description,
+            models,
+            budget_id,
+            max_reasoning_effort,
+            enabled,
+            output,
+        } => {
+            let models_update = if models.is_empty() {
+                None
+            } else {
+                Some(models.as_slice())
+            };
+            let profile = db.update_profile(
+                &id,
+                name.as_deref(),
+                description.as_ref().map(|d| Some(d.as_str())),
+                models_update,
+                budget_id.as_ref().map(|b| Some(b.as_str())),
+                max_reasoning_effort.as_ref().map(|e| Some(e.as_str())),
+                enabled,
+            )?;
+            print_value(&profile, output, |p| {
+                println!("Updated profile {} ({})", p.id, p.name);
+            });
+        }
+        ProfileCommand::Delete { id } => {
+            let cleared = db.delete_profile(&id)?;
+            println!("Deleted profile {id} ({cleared} user link(s) cleared)");
         }
     }
     Ok(())
@@ -691,19 +866,22 @@ async fn run_user_remote(db_args: &DbArgs, command: UserCommand) -> GatewayResul
         UserCommand::Create {
             user_id,
             alias,
-            budget_id,
+            profile_id,
             output,
         } => {
             let user = client
-                .create_user(&user_id, alias.as_deref(), budget_id.as_deref())
+                .create_user(&user_id, alias.as_deref(), profile_id.as_deref())
                 .await?;
             print_value(&user, output, |u| {
                 println!("Created user {} (spend ${:.4})", u.id, u.spend);
                 if let Some(a) = &u.alias {
                     println!("  alias: {a}");
                 }
+                if let Some(p) = &u.profile_id {
+                    println!("  profile_id: {p}");
+                }
                 if let Some(b) = &u.budget_id {
-                    println!("  budget_id: {b}");
+                    println!("  budget_id (from profile): {b}");
                 }
             });
         }
@@ -716,9 +894,10 @@ async fn run_user_remote(db_args: &DbArgs, command: UserCommand) -> GatewayResul
                 }
                 for u in users {
                     println!(
-                        "{}  spend=${:.4}  budget={}  alias={}",
+                        "{}  spend=${:.4}  profile={}  budget={}  alias={}",
                         u.id,
                         u.spend,
+                        u.profile_id.as_deref().unwrap_or("-"),
                         u.budget_id.as_deref().unwrap_or("-"),
                         u.alias.as_deref().unwrap_or("-"),
                     );
@@ -728,14 +907,14 @@ async fn run_user_remote(db_args: &DbArgs, command: UserCommand) -> GatewayResul
         UserCommand::Update {
             user_id,
             alias,
-            budget_id,
+            profile_id,
             output,
         } => {
             let user = client
                 .update_user(
                     &user_id,
                     alias.as_deref(),
-                    budget_id.as_ref().map(|b| Some(b.as_str())),
+                    profile_id.as_ref().map(|p| Some(p.as_str())),
                 )
                 .await?;
             print_value(&user, output, |u| {
@@ -746,6 +925,101 @@ async fn run_user_remote(db_args: &DbArgs, command: UserCommand) -> GatewayResul
             let result = client.delete_user(&user_id).await?;
             let keys_deleted = result.keys_deleted;
             println!("Deleted user {user_id} ({keys_deleted} key(s) revoked)");
+        }
+    }
+    Ok(())
+}
+
+async fn run_profile_remote(db_args: &DbArgs, command: ProfileCommand) -> GatewayResult<()> {
+    let client = db_args.remote_client()?;
+    match command {
+        ProfileCommand::Create {
+            name,
+            description,
+            models,
+            budget_id,
+            max_reasoning_effort,
+            enabled,
+            output,
+        } => {
+            let profile = client
+                .create_profile(
+                    &name,
+                    description.as_deref(),
+                    &models,
+                    budget_id.as_deref(),
+                    max_reasoning_effort.as_deref(),
+                    enabled,
+                )
+                .await?;
+            print_value(&profile, output, |p| {
+                println!(
+                    "Created profile {} ({})  models=[{}]  budget={}  reasoning={}  enabled={}",
+                    p.id,
+                    p.name,
+                    p.allowed_models.join(", "),
+                    p.budget_id.as_deref().unwrap_or("-"),
+                    p.max_reasoning_effort.as_deref().unwrap_or("-"),
+                    p.enabled,
+                );
+            });
+        }
+        ProfileCommand::List { output } => {
+            let profiles = client.list_profiles().await?;
+            print_value(&profiles, output, |profiles| {
+                if profiles.is_empty() {
+                    println!("No profiles.");
+                    return;
+                }
+                for p in profiles {
+                    println!(
+                        "{}  {}  users={}  budget={}  models=[{}]  enabled={}",
+                        p.id,
+                        p.name,
+                        p.user_count,
+                        p.budget_id.as_deref().unwrap_or("-"),
+                        p.allowed_models.join(", "),
+                        p.enabled,
+                    );
+                }
+            });
+        }
+        ProfileCommand::Update {
+            id,
+            name,
+            description,
+            models,
+            budget_id,
+            max_reasoning_effort,
+            enabled,
+            output,
+        } => {
+            let models_update = if models.is_empty() {
+                None
+            } else {
+                Some(models.as_slice())
+            };
+            let profile = client
+                .update_profile(
+                    &id,
+                    name.as_deref(),
+                    description.as_ref().map(|d| Some(d.as_str())),
+                    models_update,
+                    budget_id.as_ref().map(|b| Some(b.as_str())),
+                    max_reasoning_effort.as_ref().map(|e| Some(e.as_str())),
+                    enabled,
+                )
+                .await?;
+            print_value(&profile, output, |p| {
+                println!("Updated profile {} ({})", p.id, p.name);
+            });
+        }
+        ProfileCommand::Delete { id } => {
+            let result = client.delete_profile(&id).await?;
+            println!(
+                "Deleted profile {} ({} user link(s) cleared)",
+                result.deleted, result.users_cleared
+            );
         }
     }
     Ok(())
@@ -935,7 +1209,6 @@ async fn run_usage_remote(db_args: &DbArgs, command: UsageCommand) -> GatewayRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn user_create_and_list() {

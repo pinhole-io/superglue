@@ -30,6 +30,7 @@ mod double_option {
 pub struct CreateKeyBody {
     pub name: Option<String>,
     pub user_id: String,
+    #[serde(default)]
     pub allowed_models: Vec<String>,
     pub expires_at: Option<String>,
     pub metadata: Option<serde_json::Value>,
@@ -48,14 +49,42 @@ pub struct UpdateKeyBody {
 pub struct CreateUserBody {
     pub user_id: String,
     pub alias: Option<String>,
-    pub budget_id: Option<String>,
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateUserBody {
     pub alias: Option<String>,
     #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub profile_id: Option<Option<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateProfileBody {
+    pub name: String,
+    pub description: Option<String>,
+    pub allowed_models: Vec<String>,
+    pub budget_id: Option<String>,
+    pub max_reasoning_effort: Option<String>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileBody {
+    pub name: Option<String>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub description: Option<Option<String>>,
+    pub allowed_models: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
     pub budget_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub max_reasoning_effort: Option<Option<String>>,
+    pub enabled: Option<bool>,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,27 +126,49 @@ pub async fn create_key(
     if body.user_id.is_empty() {
         return Err(GatewayError::bad_request("user_id is required"));
     }
-    let metadata_json = body
-        .metadata
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|e| GatewayError::bad_request(e.to_string()))?;
     let name = body.name.clone();
     let user_id = body.user_id.clone();
-    let allowed_models = body.allowed_models.clone();
+    let mut allowed_models = body.allowed_models.clone();
     let expires_at = body.expires_at.clone();
-    let metadata_json = metadata_json.clone();
-    let result = state
+    let mut metadata = body.metadata.clone();
+    let (result, resolved_models) = state
         .db
         .run_blocking(move |db| {
-            db.create_api_key(
+            if allowed_models.is_empty() {
+                let Some(profile) = db.enabled_profile_for_user(&user_id)? else {
+                    return Err(GatewayError::bad_request(
+                        "allowed_models must contain at least one pattern (or assign an enabled profile to the user)",
+                    ));
+                };
+                allowed_models = profile.allowed_models.clone();
+                if let Some(effort) = profile.max_reasoning_effort.as_deref() {
+                    match metadata.as_mut() {
+                        Some(serde_json::Value::Object(map)) => {
+                            map.entry("max_reasoning_effort")
+                                .or_insert_with(|| serde_json::Value::String(effort.to_string()));
+                        }
+                        None => {
+                            metadata = Some(serde_json::json!({ "max_reasoning_effort": effort }));
+                        }
+                        Some(_) => {
+                            metadata = Some(serde_json::json!({ "max_reasoning_effort": effort }));
+                        }
+                    }
+                }
+            }
+            let metadata_json = metadata
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|e| GatewayError::bad_request(e.to_string()))?;
+            let result = db.create_api_key(
                 name.as_deref(),
                 &user_id,
                 &allowed_models,
                 expires_at.as_deref(),
                 metadata_json.as_deref(),
-            )
+            )?;
+            Ok((result, allowed_models))
         })
         .await?;
     Ok(json_ok(serde_json::json!({
@@ -125,7 +176,7 @@ pub async fn create_key(
         "key": result.plaintext_key,
         "key_prefix": result.key_prefix,
         "user_id": body.user_id,
-        "allowed_models": body.allowed_models,
+        "allowed_models": resolved_models,
     })))
 }
 
@@ -180,10 +231,12 @@ pub async fn create_user(
 ) -> GatewayResult<impl axum::response::IntoResponse> {
     let user_id = body.user_id.clone();
     let alias = body.alias.clone();
-    let budget_id = body.budget_id.clone();
+    let profile_id = body.profile_id.clone();
     let user = state
         .db
-        .run_blocking(move |db| db.create_user(&user_id, alias.as_deref(), budget_id.as_deref()))
+        .run_blocking(move |db| {
+            db.create_user(&user_id, alias.as_deref(), profile_id.as_deref())
+        })
         .await?;
     Ok(json_ok(user))
 }
@@ -203,16 +256,98 @@ pub async fn update_user(
     Json(body): Json<UpdateUserBody>,
 ) -> GatewayResult<impl axum::response::IntoResponse> {
     let alias_owned = body.alias.clone();
-    let budget_owned = body.budget_id.clone();
+    let profile_owned = body.profile_id.clone();
     let user = state
         .db
         .run_blocking(move |db| {
             let alias_update = alias_owned.as_ref().map(|a| Some(a.as_str()));
-            let budget_update = budget_owned.as_ref().map(|b| b.as_deref());
-            db.update_user(&id, alias_update, budget_update)
+            let profile_update = profile_owned.as_ref().map(|p| p.as_deref());
+            db.update_user(&id, alias_update, profile_update)
         })
         .await?;
     Ok(json_ok(user))
+}
+
+pub async fn create_profile(
+    State(state): State<Arc<GatewayState>>,
+    Auth(_auth): Auth,
+    Json(body): Json<CreateProfileBody>,
+) -> GatewayResult<impl axum::response::IntoResponse> {
+    let name = body.name.clone();
+    let description = body.description.clone();
+    let allowed_models = body.allowed_models.clone();
+    let budget_id = body.budget_id.clone();
+    let max_reasoning_effort = body.max_reasoning_effort.clone();
+    let enabled = body.enabled;
+    let profile = state
+        .db
+        .run_blocking(move |db| {
+            db.create_profile(
+                &name,
+                description.as_deref(),
+                &allowed_models,
+                budget_id.as_deref(),
+                max_reasoning_effort.as_deref(),
+                enabled,
+            )
+        })
+        .await?;
+    Ok(json_ok(profile))
+}
+
+pub async fn list_profiles(
+    State(state): State<Arc<GatewayState>>,
+    Auth(_auth): Auth,
+) -> GatewayResult<impl axum::response::IntoResponse> {
+    let profiles = state.db.run_blocking(|db| db.list_profiles()).await?;
+    Ok(json_ok(serde_json::json!({ "profiles": profiles })))
+}
+
+pub async fn update_profile(
+    State(state): State<Arc<GatewayState>>,
+    Auth(_auth): Auth,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateProfileBody>,
+) -> GatewayResult<impl axum::response::IntoResponse> {
+    let name = body.name.clone();
+    let description = body.description.clone();
+    let allowed_models = body.allowed_models.clone();
+    let budget_id = body.budget_id.clone();
+    let max_reasoning_effort = body.max_reasoning_effort.clone();
+    let enabled = body.enabled;
+    let profile = state
+        .db
+        .run_blocking(move |db| {
+            db.update_profile(
+                &id,
+                name.as_deref(),
+                description
+                    .as_ref()
+                    .map(|d| d.as_deref()),
+                allowed_models.as_deref(),
+                budget_id.as_ref().map(|b| b.as_deref()),
+                max_reasoning_effort.as_ref().map(|e| e.as_deref()),
+                enabled,
+            )
+        })
+        .await?;
+    Ok(json_ok(profile))
+}
+
+pub async fn delete_profile(
+    State(state): State<Arc<GatewayState>>,
+    Auth(_auth): Auth,
+    Path(id): Path<String>,
+) -> GatewayResult<impl axum::response::IntoResponse> {
+    let deleted_id = id.clone();
+    let users_cleared = state
+        .db
+        .run_blocking(move |db| db.delete_profile(&id))
+        .await?;
+    Ok(json_ok(serde_json::json!({
+        "deleted": deleted_id,
+        "users_cleared": users_cleared,
+    })))
 }
 
 pub async fn delete_user(
