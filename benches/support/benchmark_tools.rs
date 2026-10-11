@@ -70,8 +70,8 @@ pub async fn register_benchmark_tools(registry: &ToolRegistry) -> Result<(), Too
 /// Size of the synthetic `raw` dump attached to each fat-payload tool result.
 ///
 /// ~40k chars per tool is large enough that a 6-tool chain exceeds ~50k tokens
-/// in the next LLM round if dumps are stuffed into chat (and exceeds the
-/// default 32k-char tool-result cap, so benches raise `tool_result_max_chars`).
+/// in the next LLM round if dumps are stuffed into chat. Benches set
+/// `tool_result_max_chars` above this size when they need the full dump.
 #[allow(dead_code)]
 pub const FAT_RAW_CHARS: usize = 40_000;
 

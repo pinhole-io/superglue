@@ -361,7 +361,8 @@ pub struct ChatOptions {
 
     // --- Token limits ---
     pub max_completion_tokens: Option<u32>,
-    /// Maximum characters per tool-result message in chat history (`0` = no cap).
+    /// Maximum characters per tool-result message in chat history.
+    /// `0` keeps the full result. That is the default.
     pub tool_result_max_chars: usize,
 
     // --- Penalties ---
@@ -456,7 +457,7 @@ impl Default for ChatOptions {
             top_p: None,
             n: None,
             max_completion_tokens: None,
-            tool_result_max_chars: 32_000,
+            tool_result_max_chars: 0,
             presence_penalty: None,
             frequency_penalty: None,
             stop: None,
@@ -534,7 +535,7 @@ impl From<proto::ChatOptions> for ChatOptions {
             top_p: p.top_p,
             n: None,
             max_completion_tokens: p.max_completion_tokens,
-            tool_result_max_chars: 32_000,
+            tool_result_max_chars: 0,
             presence_penalty: p.presence_penalty,
             frequency_penalty: p.frequency_penalty,
             stop: p.stop.map(StopSequence::One),
@@ -3422,6 +3423,11 @@ mod truncate_tests {
         let content = "x".repeat(10_000);
         let out = truncate_tool_result(content.clone(), 0);
         assert_eq!(out, content);
+    }
+
+    #[test]
+    fn default_tool_result_cap_is_off() {
+        assert_eq!(super::ChatOptions::default().tool_result_max_chars, 0);
     }
 
     #[test]
