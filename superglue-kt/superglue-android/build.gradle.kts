@@ -28,6 +28,7 @@ val monorepoDotEnv: Map<String, String> =
 
 plugins {
     id("com.android.library")
+    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
@@ -245,7 +246,15 @@ val buildRustJniHost: org.gradle.api.tasks.TaskProvider<org.gradle.api.tasks.Exe
         outputs.file(File(jniOutDir, "x86_64/libsuperglue_kt.so"))
 
         workingDir = nativeDir
-        commandLine("cargo", "build", "--release")
+        // Pin the target dir so the copy step matches cargo output even when
+        // CARGO_TARGET_DIR is set in the environment.
+        commandLine(
+            "cargo",
+            "build",
+            "--release",
+            "--target-dir",
+            workspaceTargetDir.absolutePath,
+        )
 
         doLast {
             val built = workspaceTargetDir.resolve("release/libsuperglue_kt.so")

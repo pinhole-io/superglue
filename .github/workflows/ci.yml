@@ -37,3 +37,47 @@ jobs:
       - run: npm ci
       - run: npm run build:native:debug
       - run: npm run build:ts
+      - run: node test/run.mjs
+
+  superglue-py:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: superglue-py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python 3.12 and create venv
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12
+      - name: Install maturin and pytest
+        run: uv pip install maturin pytest
+      - name: Build and install extension
+        run: .venv/bin/maturin develop --profile dev
+      - name: Run tests
+        run: .venv/bin/pytest
+
+  superglue-kt:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: superglue-kt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android platform 36
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36"
+      - name: Run host unit tests
+        run: ./gradlew :superglue-android:testDebugUnitTest --no-daemon
