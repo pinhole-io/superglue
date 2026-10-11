@@ -113,6 +113,11 @@ name = "35_code_tool_mode"
 path = "examples/35_code_tool_mode.rs"
 required-features = ["code"]
 
+[[example]]
+name = "36_realtime_voice"
+path = "examples/36_realtime_voice.rs"
+required-features = ["realtime"]
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

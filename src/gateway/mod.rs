@@ -92,9 +92,13 @@ impl GatewayState {
 
 /// Start the axum HTTP server on the configured listen address.
 pub async fn serve(config: GatewayConfig) -> Result<(), GatewayError> {
-    let mut state = GatewayState::new(config)?;
+    let state = GatewayState::new(config)?;
     #[cfg(feature = "capture")]
-    state.init_capture().await?;
+    let state = {
+        let mut state = state;
+        state.init_capture().await?;
+        state
+    };
     let state = Arc::new(state);
     let addr: SocketAddr = state
         .config
