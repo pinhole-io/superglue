@@ -149,6 +149,11 @@ name = "context_optimization_wiremock"
 path = "tests/context_optimization_wiremock.rs"
 required-features = ["code"]
 
+[[test]]
+name = "context_optimization_benchmark"
+path = "tests/context_optimization_benchmark.rs"
+required-features = ["code"]
+
 [[bench]]
 name = "context_optimization"
 harness = false
