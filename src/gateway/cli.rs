@@ -542,9 +542,8 @@ fn run_key(path: &PathBuf, command: KeyCommand) -> GatewayResult<()> {
                 };
                 allowed_models = profile.allowed_models;
                 if let Some(effort) = profile.max_reasoning_effort {
-                    metadata_json = Some(
-                        serde_json::json!({ "max_reasoning_effort": effort }).to_string(),
-                    );
+                    metadata_json =
+                        Some(serde_json::json!({ "max_reasoning_effort": effort }).to_string());
                 }
             }
             let result = db.create_api_key(

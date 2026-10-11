@@ -142,17 +142,7 @@ async fn responses_xai_posts_v1_responses_with_bearer() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
-        .respond_with(|req: &wiremock::Request| {
-            let auth = req
-                .headers
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            assert!(auth.starts_with("Bearer "));
-            let body: Value = serde_json::from_slice(&req.body).unwrap_or(json!({}));
-            assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("grok-4"));
-            ResponseTemplate::new(200).set_body_json(text_response("xai ok"))
-        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(text_response("xai ok")))
         .mount(&server)
         .await;
 
@@ -167,6 +157,20 @@ async fn responses_xai_posts_v1_responses_with_bearer() {
     .await
     .unwrap();
 
+    let requests = server.received_requests().await.expect("recorded requests");
+    let req = requests.first().expect("one responses post");
+    let auth = req
+        .headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(auth.starts_with("Bearer "), "auth was {auth:?}");
+    let body: Value = serde_json::from_slice(&req.body).unwrap_or(json!({}));
+    // The mock URL is not the xAI default, so the body keeps `provider:model`.
+    assert_eq!(
+        body.get("model").and_then(|v| v.as_str()),
+        Some("xai:grok-4")
+    );
     assert_eq!(out.content.as_deref(), Some("xai ok"));
 }
 

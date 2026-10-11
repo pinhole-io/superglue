@@ -6,9 +6,12 @@
 
 mod support;
 
+#[path = "support/context_tools.rs"]
+mod context_tools;
+
+use context_tools::register_context_optimization_tools;
 use superglue::context::SummarizeContextConfig;
 use superglue::tools::ToolMode;
-use support::context_tools::register_context_optimization_tools;
 use support::usage_line;
 
 #[tokio::main]

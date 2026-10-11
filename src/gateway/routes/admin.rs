@@ -234,9 +234,7 @@ pub async fn create_user(
     let profile_id = body.profile_id.clone();
     let user = state
         .db
-        .run_blocking(move |db| {
-            db.create_user(&user_id, alias.as_deref(), profile_id.as_deref())
-        })
+        .run_blocking(move |db| db.create_user(&user_id, alias.as_deref(), profile_id.as_deref()))
         .await?;
     Ok(json_ok(user))
 }
@@ -321,9 +319,7 @@ pub async fn update_profile(
             db.update_profile(
                 &id,
                 name.as_deref(),
-                description
-                    .as_ref()
-                    .map(|d| d.as_deref()),
+                description.as_ref().map(|d| d.as_deref()),
                 allowed_models.as_deref(),
                 budget_id.as_ref().map(|b| b.as_deref()),
                 max_reasoning_effort.as_ref().map(|e| e.as_deref()),

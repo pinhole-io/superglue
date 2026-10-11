@@ -108,10 +108,7 @@ fn is_gpt5_family(model: &str) -> bool {
     let m = model_lower(model);
     // gpt-5.* and gpt-6.* (e.g. gpt-6-luna) share chat reasoning_effort levels,
     // including `none` required when function tools use /v1/chat/completions.
-    m.starts_with("gpt-5")
-        || m.contains("gpt-5.")
-        || m.starts_with("gpt-6")
-        || m.contains("gpt-6.")
+    m.starts_with("gpt-5") || m.contains("gpt-5.") || m.starts_with("gpt-6") || m.contains("gpt-6.")
 }
 
 fn is_o_series(model: &str) -> bool {

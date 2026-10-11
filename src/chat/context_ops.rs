@@ -33,8 +33,14 @@ pub async fn resolve_tool_route(
     }
 
     if parse_model_ref(route_model).provider.uses_system_one() && dynamic_specs.len() <= 20 {
-        match resolve_tool_route_system_one(http, credentials, user_context, dynamic_specs, route_model)
-            .await
+        match resolve_tool_route_system_one(
+            http,
+            credentials,
+            user_context,
+            dynamic_specs,
+            route_model,
+        )
+        .await
         {
             Some(specs) => return specs,
             None => {

@@ -1,6 +1,8 @@
 //! Shared helpers for numbered `cargo run --example` binaries.
-
-pub mod context_tools;
+//!
+//! Context-tool registration is not part of this module. Examples that need it
+//! include `context_tools.rs` or `fat_context_tools.rs` directly, so the other
+//! examples do not compile those items.
 
 use std::process;
 use std::sync::Arc;

@@ -13,8 +13,12 @@ mod bench_configs;
 mod bench_metrics;
 #[path = "../benches/support/bench_report.rs"]
 mod bench_report;
+#[path = "support/context_tools.rs"]
+mod context_tools;
 #[path = "../benches/support/conversation_profiles.rs"]
 mod conversation_profiles;
+#[path = "support/fat_context_tools.rs"]
+mod fat_context_tools;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -26,16 +30,15 @@ use bench_report::{
     BenchmarkRow, LIVE_BENCHMARK_NOTE, MultiTurnReport, print_benchmark_table,
     print_multiturn_table,
 };
+use context_tools::register_context_optimization_tools;
 use conversation_profiles::aaak_compression_enabled_multiturn;
 use conversation_profiles::{
     ConversationProfile, MULTITURN_MAX_TOOL_ROUNDS, MULTITURN_PROMPTS, benchmark_system_prompt,
     fat_benchmark_system_prompt, multiturn_system_prompt, summarize_config_multiturn,
 };
+use fat_context_tools::register_fat_context_optimization_tools;
 use superglue::events::{ProcessEvent, ProcessEventKind, StatusEmitter, StatusSubscriber};
 use superglue::openai::ChatMessage;
-use support::context_tools::{
-    register_context_optimization_tools, register_fat_context_optimization_tools,
-};
 use support::{base_url, model, require_api_key};
 
 struct CumulativeTokenCollector {
@@ -446,7 +449,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    const FAT_RAW_CHARS: usize = support::context_tools::FAT_RAW_CHARS;
+    const FAT_RAW_CHARS: usize = fat_context_tools::FAT_RAW_CHARS;
     if run_fat {
         println!("=== fat payloads ({FAT_RAW_CHARS} raw chars / tool) ===\n");
         println!(

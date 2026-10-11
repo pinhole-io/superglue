@@ -728,10 +728,7 @@ impl Database {
     }
 
     /// Enabled profile for a user, if assigned.
-    pub fn enabled_profile_for_user(
-        &self,
-        user_id: &str,
-    ) -> GatewayResult<Option<ProfileRecord>> {
+    pub fn enabled_profile_for_user(&self, user_id: &str) -> GatewayResult<Option<ProfileRecord>> {
         let conn = self.lock()?;
         let profile_id: Option<String> = conn
             .query_row(
@@ -1485,7 +1482,9 @@ mod tests {
                 None,
                 Some(&["openai:*".into(), "anthropic:*".into()]),
                 None,
-                Some(Some(serde_json::json!({ "max_reasoning_effort": "medium" }))),
+                Some(Some(
+                    serde_json::json!({ "max_reasoning_effort": "medium" }),
+                )),
             )
             .unwrap();
         assert!(updated.allowed_models.contains(&"openai:*".to_string()));
@@ -1637,22 +1636,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(dir.path().join("test.db")).unwrap();
         let created = db
-            .create_profile(
-                "team",
-                None,
-                &["openai:*".into()],
-                None,
-                None,
-                true,
-            )
+            .create_profile("team", None, &["openai:*".into()], None, None, true)
             .unwrap();
         let listed = db.list_profiles().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, created.id);
         assert_eq!(listed[0].user_count, 0);
 
-        db.update_profile(&created.id, Some("team-v2"), None, None, None, None, Some(false))
-            .unwrap();
+        db.update_profile(
+            &created.id,
+            Some("team-v2"),
+            None,
+            None,
+            None,
+            None,
+            Some(false),
+        )
+        .unwrap();
         let disabled = db.get_profile(&created.id).unwrap().unwrap();
         assert!(!disabled.enabled);
         assert_eq!(disabled.name, "team-v2");
