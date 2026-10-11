@@ -1,6 +1,6 @@
 {
   "name": "superglue-js",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Node.js bindings for the superglue Rust LLM core (napi-rs)",
   "license": "MIT",
   "main": "index.js",

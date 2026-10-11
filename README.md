@@ -12,7 +12,7 @@ SuperGlue talks to model providers, runs tool calling, streams tokens, and recor
 
 [Quick start](#quick-start) · [Install](#install) · [Providers](docs/multi-provider.md) · [Gateway](_docs/12-llm-gateway.md) · [Examples](examples/README.md) · [Design notes](_docs/README.md)
 
-> Release `0.1.0`. The workflow engine is on the [roadmap](_docs/09-roadmap-and-phasing.md).
+> Release `1.0.0`. The workflow engine is on the [roadmap](_docs/09-roadmap-and-phasing.md).
 
 ## Contents
 

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "superglue-py"
-version = "0.1.0"
+version = "1.0.0"
 description = "Experimental Python bindings for the superglue Rust core"
 license = "MIT"
 requires-python = ">=3.12"
