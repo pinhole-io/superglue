@@ -79,4 +79,8 @@ jobs:
         with:
           packages: "platforms;android-36"
       - name: Run host unit tests
+        env:
+          # Runner images often expose ANDROID_NDK_HOME. Force host cargo build
+          # instead of cargo-ndk (no NDK / cargo-ndk install in this job).
+          SUPERGLUE_FORCE_HOST_JNI: "1"
         run: ./gradlew :superglue-android:testDebugUnitTest --no-daemon

@@ -156,7 +156,15 @@ val abis = listOf("arm64-v8a", "x86_64")
 val superglueDir = nativeDir.parentFile.parentFile.resolve("superglue")
 
 val resolvedNdkPath: String? = project.resolveAndroidNdkPath()
-val canBuildRustJni: Boolean = resolvedNdkPath != null && nativeDir.resolve("Cargo.toml").exists()
+
+// Force the host `cargo build` path even when an NDK is on the machine
+// (GitHub runners often set ANDROID_NDK_HOME). Use for CI unit tests.
+val forceHostJni =
+    (findProperty("superglue.forceHostJni") as? String)?.equals("true", ignoreCase = true) == true ||
+        System.getenv("SUPERGLUE_FORCE_HOST_JNI") == "1"
+
+val canBuildRustJni: Boolean =
+    !forceHostJni && resolvedNdkPath != null && nativeDir.resolve("Cargo.toml").exists()
 
 val skipNativeBuild =
     (findProperty("superglue.skipNativeBuild") as? String)?.equals("true", ignoreCase = true) == true ||
