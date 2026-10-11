@@ -16,7 +16,8 @@ jobs:
       - name: Generate proto stubs
         run: |
           python3 -m venv .venv-proto
-          .venv-proto/bin/pip install grpcio-tools --quiet
+          # Pin must match GRPC_GENERATED_VERSION in committed stubs.
+          .venv-proto/bin/pip install 'grpcio-tools==1.83.0' --quiet
           bash scripts/generate-proto-clients.sh
       - name: Verify generated Python proto stubs are committed
         run: git diff --exit-code superglue-py/superglue/grpc/
@@ -74,10 +75,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install Android platform 36
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36"
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-36"
       - name: Run host unit tests
         run: ./gradlew :superglue-android:testDebugUnitTest --no-daemon

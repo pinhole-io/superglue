@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Generate gRPC client stubs for Python and JavaScript from proto/superglue.proto.
+#
+# Pin grpcio-tools to the same version CI uses (see .github/workflows/ci.yml)
+# so regenerated stubs match the committed GRPC_GENERATED_VERSION.
+# Current pin: grpcio-tools==1.83.0
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
