@@ -1,55 +1,61 @@
 # SuperGlue
 
-**One Rust core for LLM orchestration.** Python, JavaScript, and Kotlin call the same loop.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust edition 2024](https://img.shields.io/badge/rust-edition%202024-orange.svg)](Cargo.toml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](superglue-py)
+[![Node.js 18+](https://img.shields.io/badge/node.js-18%2B-green.svg)](superglue-js)
+[![Kotlin JNI](https://img.shields.io/badge/kotlin-Android%20JNI-purple.svg)](superglue-kt)
 
-SuperGlue talks to model providers, runs the tool loop, streams tokens, and records usage.
-Bindings stay thin. Retry rules, SSE parsing, and tool dispatch live in one place.
+**LLM orchestration in one Rust core.** Python, JavaScript, and Kotlin call the same loop.
 
-```rust
-let client = superglue::Client::builder()
-    .api_key(std::env::var("OPENAI_API_KEY")?)
-    .model("openai:gpt-4o-mini")
-    .build()?;
+SuperGlue talks to model providers, runs tool calling, streams tokens, and records usage. Retry rules, SSE parsing, and tool dispatch live in Rust. Bindings register tools and callbacks. Tool arguments and results cross the boundary as JSON.
 
-let outcome = client
-    .complete("What is the capital of France?", superglue::CallOptions::default())
-    .await?;
+[Quick start](#quick-start) · [Install](#install) · [Providers](docs/multi-provider.md) · [Gateway](_docs/12-llm-gateway.md) · [Examples](examples/README.md) · [Design notes](_docs/README.md)
 
-println!("{}", outcome.content.unwrap_or_default());
-```
+> Release `0.1.0`. The workflow engine is on the [roadmap](_docs/09-roadmap-and-phasing.md).
 
+## Contents
 
-
-## Why SuperGlue
-
-Most language SDKs reimplement the same glue: HTTP, retries, tool rounds, streaming, and redaction.
-
-That copy drifts. A retry bug in Python does not match the bug in Node.
-
-SuperGlue puts that loop in Rust. Host languages register tools and callbacks.
-Tool arguments and results cross the boundary as JSON.
-
-## Features
-
-- **Completions and streaming** — buffered `complete` and SSE `stream` on the same client
-- **Tool loop** — JSON tools, parallel dispatch in a round, per-tool FailFast / Skip / Retry
-- **Providers** — `provider:model` routing (OpenAI, Anthropic, xAI, Groq, OpenRouter, and more)
-- **Reliability** — retries, rate limits, model fallback, cooperative cancel
-- **Agents** — personas, hooks, guardrails, status events, usage and cost
-- **Context control** — tool routing, round condensing, optional code-mode tools (`code` feature)
-- **Observability** — `tracing` with redaction; optional OTLP and Prometheus
-- **Optional servers** — gRPC sidecar (`grpc`) and an OpenAI-compatible HTTP gateway (`gateway`)
-- **Language bindings** — Python (PyO3), Node.js (napi-rs), Kotlin (JNI)
-
-The workflow engine is not shipped yet. See `[_docs/09-roadmap-and-phasing.md](_docs/09-roadmap-and-phasing.md)`.
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Tool calling](#tool-calling)
+- [Features](#features)
+- [How it fits together](#how-it-fits-together)
+- [Model providers](#model-providers)
+- [LLM gateway](#llm-gateway)
+- [Documentation](#documentation)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
 
 ## Install
 
+Pick the language you call from. Every package shares `[workspace.package].version` in [Cargo.toml](Cargo.toml). See [PACKAGES.md](PACKAGES.md).
 
+| Language | Where it runs | Package |
+| --- | --- | --- |
+| Rust | Library and CLI | this directory |
+| Python | CPython 3.12 or newer. The dev script expects free-threaded 3.14. | [superglue-py](superglue-py) |
+| JavaScript | Node.js 18 or newer. Current native targets: Linux x86_64, Linux aarch64, macOS x86_64, macOS Apple Silicon. | [superglue-js](superglue-js) |
+| Kotlin | Android JNI (`arm64-v8a`, `x86_64`) | [superglue-kt](superglue-kt) |
+
+Optional Cargo features stay off until you enable them.
+
+| Feature | What it adds |
+| --- | --- |
+| `mcp` | MCP tool clients |
+| `grpc` | gRPC server and client |
+| `gateway` | OpenAI-compatible HTTP gateway (virtual keys, budgets, usage) |
+| `capture` | Gateway traffic capture. Requires `gateway`. Can upload to S3. |
+| `otlp` | OpenTelemetry span export |
+| `prometheus` | Prometheus metrics endpoint |
+| `code` | Programmatic JavaScript tool mode |
+| `realtime` | Realtime voice sessions. The first adapter is xAI Speech to Speech. |
 
 ### Rust
 
-Add the crate from git (current version is `0.1.0`):
+Add the crate from git:
 
 ```toml
 [dependencies]
@@ -57,97 +63,199 @@ superglue = { git = "https://github.com/Bioto/superglue" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Optional features stay off by default. Enable them when you need the extra surface:
+Enable a feature in the same dependency:
 
-
-| Feature               | What it adds                                       |
-| --------------------- | -------------------------------------------------- |
-| `mcp`                 | MCP tool clients                                   |
-| `grpc`                | gRPC server and client                             |
-| `gateway`             | HTTP LLM gateway (keys, budgets, usage)            |
-| `otlp` / `prometheus` | OTLP spans and a metrics endpoint                  |
-| `code`                | Programmatic JavaScript tool mode                  |
-| `realtime`            | Realtime voice sessions (xAI WebSocket first)      |
-| `capture`             | Gateway traffic capture (`gateway` plus S3 upload) |
-
-
-
+```toml
+superglue = { git = "https://github.com/Bioto/superglue", features = ["gateway"] }
+```
 
 ### Python
 
-Build the wheel from `superglue-py/` with [maturin](https://www.maturin.rs/):
+1. Install [uv](https://docs.astral.sh/uv/) and [maturin](https://www.maturin.rs/).
+2. Create a free-threaded 3.14 virtual environment.
+3. Build the wheel.
 
 ```bash
 cd superglue-py
+uv venv --python 3.14t
 ./dev.sh
 ```
 
-Then:
+`requires-python` is `>=3.12`. `./dev.sh` looks for `.venv/bin/python` from that 3.14t environment.
+
+### JavaScript
+
+Build the napi-rs addon and the TypeScript facade from this repo:
+
+```bash
+cd superglue-js
+npm install
+npm run build
+```
+
+Tools need an explicit JSON Schema. Prefer `superglue-js/facade` for client options, tools, and guardrails. Details: [superglue-js/README.md](superglue-js/README.md).
+
+### Kotlin
+
+Build the JNI library with the Android NDK and `cargo-ndk`. Steps: [superglue-kt/README.md](superglue-kt/README.md).
+
+## Quick start
+
+Set a provider key before you call a live model. The examples use `OPENAI_API_KEY`.
+
+Keep keys in the environment. The core stores them in `secrecy` types and redacts them in traces.
+
+### From this repository
+
+```bash
+cargo run --example 01_simple_completion
+```
+
+### Rust library
+
+```rust
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = superglue::Client::builder()
+        .api_key(std::env::var("OPENAI_API_KEY")?)
+        .model("openai:gpt-4o-mini")
+        .build()?;
+
+    let outcome = client
+        .complete(
+            "What is the capital of France?",
+            superglue::CallOptions::default(),
+        )
+        .await?;
+
+    println!("{}", outcome.content.unwrap_or_default());
+    Ok(())
+}
+```
+
+Pass models as `provider:model`. Examples: `openai:gpt-4o-mini`, `anthropic:claude-sonnet-4-20250514`.
+
+### Python
 
 ```python
 import os
 import superglue
 
-client = superglue.Client(api_key=os.environ["OPENAI_API_KEY"], model="openai:gpt-4o-mini")
+client = superglue.Client(
+    api_key=os.environ["OPENAI_API_KEY"],
+    model="openai:gpt-4o-mini",
+)
 result = client.complete("What is the capital of France? Reply in one sentence.")
 print(result.content)
 ```
 
+### JavaScript
 
+Run this after `npm run build` in `superglue-js/`.
 
-### JavaScript and Kotlin
+```js
+const { createClient } = require("superglue-js/facade");
 
+async function main() {
+  const client = createClient({
+    apiKey: process.env.OPENAI_API_KEY,
+    model: "openai:gpt-4o-mini",
+  });
+  const outcome = await client.complete("What is the capital of France?");
+  console.log(outcome.content);
+}
 
-| Binding | Path                            | Notes                                             |
-| ------- | ------------------------------- | ------------------------------------------------- |
-| Node.js | `[superglue-js/](superglue-js)` | napi-rs addon; tools need an explicit JSON Schema |
-| Kotlin  | `[superglue-kt/](superglue-kt)` | JNI; same core, same version                      |
-
-
-All packages share `[workspace.package].version` in `[Cargo.toml](Cargo.toml)`. See [PACKAGES.md](PACKAGES.md).
-
-## Quick start (from this repo)
-
-1. Set a provider key. Default examples use `OPENAI_API_KEY`.
-2. From the SuperGlue root, run:
-
-```bash
-cargo build
-cargo test
-cargo run --example 01_simple_completion
+main();
 ```
 
-MCP tests need the `mcp` feature:
+## Tool calling
 
-```bash
-cargo test --features mcp
+Register a tool on the client. `complete` runs the tool loop in Rust and returns the final text.
+
+Python builds the JSON Schema from the function signature and the docstring:
+
+```python
+def get_weather(location: str, unit: str = "celsius") -> dict:
+    """Get the current weather for a city."""
+    return {"location": location, "temperature": 22, "unit": unit}
+
+client.register_tool(get_weather)
+result = client.complete("What is the weather in Tokyo?")
+print(result.content)
 ```
 
-Numbered examples cover tools, streaming, batch, agents, MCP, and more.
-Start at `[examples/README.md](examples/README.md)`.
+JavaScript and Kotlin need an explicit JSON Schema on each tool. Rust examples use `ToolSpec` plus a callback. Start with [examples/03_single_tool.rs](examples/03_single_tool.rs), [superglue-py/examples/03_single_tool.py](superglue-py/examples/03_single_tool.py), and [superglue-js/examples/03_single_tool.mjs](superglue-js/examples/03_single_tool.mjs).
 
-## Providers and secrets
+Each tool can use `FailFast`, `Skip`, or `Retry`. One round can dispatch several tools together.
 
-Pass `provider:model` (for example `openai:gpt-4o-mini` or `anthropic:claude-sonnet-4-20250514`).
+## Features
 
-Keep keys in the environment. Do not put them in config files, logs, or commits.
-The core wraps keys in `secrecy` types and redacts them in traces by default.
+| Feature | What you get |
+| --- | --- |
+| Completions | Buffered `complete` on one client |
+| Streaming | SSE `stream`. With tools registered, the stream runs the same multi-round loop. |
+| Tool loop | JSON tools, parallel dispatch in a round, per-tool error policy |
+| Providers | `provider:model` routing. See [Model providers](#model-providers). |
+| Embeddings | `Client::embed` and gateway `POST /v1/embeddings` for OpenAI-compatible providers |
+| Reliability | Retries, per-key rate limits, model fallback, cooperative cancel |
+| Agents | Personas, hooks, guardrails, status events, usage, and cost |
+| Context control | Dynamic tool routing, round condensing, and optional code-mode tools (`code` feature) |
+| Files | Inline bytes or a provider file upload. Default inline cap is 20 MB. |
+| Voice | Duplex sessions on xAI when you enable `realtime` |
+| Observability | `tracing` with redaction. Optional OTLP and Prometheus. |
+| Servers | gRPC sidecar (`grpc`) and an OpenAI-compatible HTTP gateway (`gateway`) |
+| Bindings | Python (PyO3), Node.js (napi-rs), Kotlin (JNI) |
 
+## How it fits together
 
-| Provider   | API key env          |
-| ---------- | -------------------- |
-| OpenAI     | `OPENAI_API_KEY`     |
-| Anthropic  | `ANTHROPIC_API_KEY`  |
-| xAI        | `XAI_API_KEY`        |
-| Groq       | `GROQ_API_KEY`       |
-| OpenRouter | `OPENROUTER_API_KEY` |
+```text
+Python / JavaScript / Kotlin / CLI
+            │  JSON tools, native callbacks
+            ▼
+     SuperGlue (Rust, Tokio)
+            │  HTTP, SSE, optional WebSocket
+            ▼
+     Model providers
+```
 
+- The Rust core owns HTTP, retries, streaming, the tool loop, and telemetry.
+- A binding supplies the host callback and the JSON payload.
+- `proto/superglue.proto` is the shared schema for gRPC and audit records.
+- The gateway is an optional HTTP front door. It adds virtual keys, budgets, and usage, then calls the same providers.
 
-Optional base URL overrides and file-upload notes live in `[docs/multi-provider.md](docs/multi-provider.md)`.
+Read the map in [Architecture](_docs/02-architecture.md).
 
-## Gateway
+## Model providers
 
-The `gateway` feature starts an OpenAI-compatible HTTP proxy with virtual keys, budgets, and usage tracking.
+Use `provider:model` for chat. The prefix selects the key and the base URL. The suffix is the model id sent to that provider. A bare model id uses OpenAI.
+
+| Provider | Model prefix | API key variable |
+| --- | --- | --- |
+| OpenAI | `openai` | `OPENAI_API_KEY` |
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
+| xAI | `xai` | `XAI_API_KEY` |
+| Groq | `groq` | `GROQ_API_KEY` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+| RunInfra | `runinfra` | `RUNINFRA_GATEWAY_KEY` |
+| Vercel AI Gateway | `vercel` | `VERCEL_GATEWAY_KEY` |
+
+OpenRouter also accepts `OPENROUTER_GATEWAY_KEY` when `OPENROUTER_API_KEY` is unset.
+
+The environment loader reads two base URL overrides: `OPENAI_BASE_URL` and `TYPESAFE_BASE_URL`. Set `OPENAI_BASE_URL` for an OpenAI-compatible host such as Ollama. Set any other base URL on the client with `ClientBuilder::base_url_for` in Rust, or the matching option in a binding.
+
+TypeSafe (`TYPESAFE_API_KEY`) is the System One evaluation API. It is separate from the chat providers above.
+
+Embeddings use `provider:embedding:model` when the model must appear in an embedding catalog. Example: `openai:embedding:text-embedding-3-small`.
+
+Voice example: `xai:grok-voice-think-fast-2.0` with the `realtime` feature and `XAI_API_KEY`.
+
+File uploads, per-key rate limits, and binding overrides: [docs/multi-provider.md](docs/multi-provider.md).
+
+## LLM gateway
+
+The `gateway` feature serves an OpenAI-compatible HTTP proxy. It stores virtual keys, budgets, and usage in SQLite.
+
+**Keep `GATEWAY_MASTER_KEY` on the operator host.** It authorizes admin commands.
 
 ```bash
 cargo build --features gateway --release
@@ -155,28 +263,96 @@ cargo build --features gateway --release
 export GATEWAY_MASTER_KEY="replace-me"
 export OPENAI_API_KEY="sk-..."
 
-superglue gateway serve --addr 127.0.0.1:8080 --db ./superglue-gateway.db
+./target/release/superglue gateway serve --addr 127.0.0.1:8080 --db ./superglue-gateway.db
 ```
 
-Full CLI and threat notes: `[_docs/12-llm-gateway.md](_docs/12-llm-gateway.md)`.
+The gateway binary embeds the admin UI. Build [gateway-admin](gateway-admin/README.md) before `cargo build` when you want `/admin/`.
 
-## Architecture
+### CLI cheat sheet
 
+Run these with `./target/release/superglue` after the build above.
+
+Global flags: `--log-level`, `--log-format pretty|json`, `--scrub-mode redact|hash|allow`.
+
+| Task | Command |
+| --- | --- |
+| Start the server | `superglue gateway serve --addr 127.0.0.1:8080` |
+| Create a budget | `superglue gateway budget create --max-budget 10 --duration-sec 2592000` |
+| Create a user | `superglue gateway user create --user-id alice --alias Alice` |
+| Create a virtual key | `superglue gateway key create --user-id alice --model 'openai:*'` |
+| List keys | `superglue gateway key list` |
+| List usage | `superglue gateway usage list --user-id alice --limit 50` |
+| List models for a key | `superglue gateway model list --key sgw-...` |
+| Talk to a remote gateway | `superglue gateway --url https://gateway.example.com user list` |
+
+Key creation prints the secret once. Store it before you close the terminal.
+
+Full command list, profiles, and threat notes: [_docs/12-llm-gateway.md](_docs/12-llm-gateway.md).
+
+## Documentation
+
+Design notes live in this repo. Start at [_docs/README.md](_docs/README.md).
+
+| Goal | Start here |
+| --- | --- |
+| See why the core is Rust | [Vision and principles](_docs/01-vision-and-principles.md) |
+| See what runs where | [Architecture](_docs/02-architecture.md) |
+| Pass tools across a binding | [Tool boundary and async](_docs/03-tool-boundary-and-async.md) |
+| Call another provider or attach a file | [Multi-provider guide](docs/multi-provider.md) |
+| Shrink a long tool transcript | [Context optimization](_docs/11-context-optimization.md) |
+| Run the HTTP gateway | [LLM gateway](_docs/12-llm-gateway.md) |
+| Open the admin UI | [Gateway admin](gateway-admin/README.md) |
+| Export traces or metrics | [Observability](_docs/05-observability.md) |
+| Review secrets, auth, and failure | [Security and threat model](_docs/06-security-and-threat-model.md) |
+| Use gRPC or the protobuf schema | [Protobuf, gRPC, and workflows](_docs/04-protobuf-grpc-and-workflows.md) |
+| See what is shipped | [Design index](_docs/README.md) |
+| See what is planned | [Roadmap](_docs/09-roadmap-and-phasing.md) |
+| Run a numbered example | [Examples](examples/README.md) |
+| Bump the shared version | [PACKAGES.md](PACKAGES.md) |
+
+## Examples
+
+Numbered examples cover the same topics in Rust, Python, and JavaScript.
+
+```bash
+cargo run --example 01_simple_completion
+cargo run --example 11_streaming
+cargo run --example 29_multi_provider
+cargo run --example 28_mcp_tools --features mcp
+cargo run --example 35_code_tool_mode --features code
+cargo run --example 36_realtime_voice --features realtime
 ```
-Python / JS / Kotlin / CLI
-            │  JSON tools, native callbacks
-            ▼
-     SuperGlue (Rust)
-            │  HTTP + SSE
-            ▼
-     Model providers
-```
 
-- Orchestration runs in Rust (Tokio).
-- Bindings do not reimplement the tool loop.
-- Protobuf (`proto/superglue.proto`) is the shared schema for gRPC and audit records.
+| Goal | Example |
+| --- | --- |
+| First completion | `01_simple_completion` |
+| System prompt | `02_system_prompt` |
+| One tool, then several | `03_single_tool`, `04_multiple_tools` |
+| Usage, errors, retry, rate limits | `05_usage_tracking`, `06_error_handling`, `15_rate_limiting`, `16_retry_configuration` |
+| Streaming | `11_streaming`, `30_streaming_tools` |
+| Batch calls | `17_batch_completions` |
+| Hooks, guardrails, agents | `18_hooks`, `19_guardrails`, `20_agents` |
+| Fallback and several providers | `25_model_fallback`, `29_multi_provider` |
+| Files | `31_file_upload` |
+| Smaller tool context | `32_context_optimization`, `35_code_tool_mode` |
+| MCP tools | `28_mcp_tools` |
+| Voice | `36_realtime_voice` |
 
-Maintainer design notes: `[_docs/README.md](_docs/README.md)`.
+The full parity table is in [examples/README.md](examples/README.md).
+
+## Troubleshooting
+
+| What you see | What to do |
+| --- | --- |
+| Missing `OPENAI_API_KEY` | Export the key for the provider prefix you used. See [Model providers](#model-providers). |
+| The call hits OpenAI with the wrong model id | Use `provider:model`, for example `anthropic:claude-sonnet-4-20250514`. A slash form logs a deprecation warning. An unknown prefix falls back to OpenAI. |
+| `unrecognized subcommand 'gateway'` | Rebuild with `--features gateway`. The default binary omits that command. |
+| MCP example fails to compile | Pass `--features mcp`. |
+| Code-mode example fails to compile | Pass `--features code`. |
+| Python cannot import `superglue` | Run `./dev.sh` inside `superglue-py` after `uv venv --python 3.14t`. |
+| Node `Cannot find module` | Run `npm run build` in `superglue-js`. The facade import also needs `npm run build:ts`. |
+| A secret appears in a log | Keep the default scrub mode `redact`. Use `--scrub-mode allow` only on a local machine. |
+| Gateway admin page is empty | Build [gateway-admin](gateway-admin/README.md), then rebuild the `gateway` feature. The binary embeds `dist/`. |
 
 ## Development
 
@@ -186,6 +362,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
+MCP tests need the feature flag:
+
+```bash
+cargo test --features mcp
+```
+
 After you change `[workspace.package].version`:
 
 ```bash
@@ -193,11 +375,10 @@ After you change `[workspace.package].version`:
 ./scripts/check-superglue-version-parity.sh
 ```
 
-In [thestack](https://github.com/Bioto/thestack), this repo is the `projects/superglue` submodule. Layout notes: [MONOREPO.md](MONOREPO.md).
+In [thestack](https://github.com/Bioto/thestack), this repository is the `projects/superglue` submodule. Layout notes: [MONOREPO.md](MONOREPO.md).
 
 ## License
 
-BSD-4-Clause. See [LICENSE](LICENSE).
+The license is [MIT](LICENSE).
 
-Public materials that mention this software must display the acknowledgement in the LICENSE file.
-This license is GPL-incompatible.
+Keep the copyright notice and the permission notice in every copy.
