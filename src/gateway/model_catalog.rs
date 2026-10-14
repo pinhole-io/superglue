@@ -1,6 +1,6 @@
 //! Upstream model catalog for unrestricted keys and provider wildcards.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use secrecy::ExposeSecret;
@@ -44,6 +44,49 @@ fn upstream_context_length(entry: &Value) -> Option<u32> {
     u32::try_from(n).ok().filter(|n| *n > 0)
 }
 
+/// Window for a literal allowlisted id from a provider catalog map.
+fn context_for_literal(id: &str, windows: &HashMap<String, u32>) -> Option<u32> {
+    if let Some(tokens) = windows.get(id).copied().filter(|n| *n > 0) {
+        return Some(tokens);
+    }
+    // `openai:embedding:text-embedding-3-small` matches upstream `openai:text-embedding-3-small`.
+    let (provider, rest) = id.split_once(':')?;
+    let model = rest.strip_prefix("embedding:")?;
+    if model.is_empty() {
+        return None;
+    }
+    windows
+        .get(&format!("{provider}:{model}"))
+        .copied()
+        .filter(|n| *n > 0)
+}
+
+fn record_windows(models: &[Value], windows: &mut HashMap<String, u32>) {
+    for model in models {
+        let Some(id) = model.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(tokens) = model
+            .get("context_length")
+            .and_then(|value| {
+                value
+                    .as_u64()
+                    .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+            })
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n > 0)
+        else {
+            continue;
+        };
+        windows.insert(id.to_string(), tokens);
+    }
+}
+
+fn provider_for_model_id(id: &str) -> Option<ProviderId> {
+    let (prefix, _) = id.split_once(':')?;
+    ProviderId::from_str(prefix).ok()
+}
+
 fn dedupe_sort_models(models: &mut Vec<Value>) {
     models.sort_by(|a, b| {
         a["id"]
@@ -71,6 +114,8 @@ pub async fn list_models(
 
     let mut result = Vec::new();
     let mut fetch_providers = HashSet::new();
+    let mut literals = Vec::new();
+    let mut enrich_providers = HashSet::new();
 
     for pattern in patterns {
         if let Some(prefix) = pattern.strip_suffix(":*") {
@@ -79,14 +124,40 @@ pub async fn list_models(
                 continue;
             }
         }
-        result.push(model_entry(pattern));
+        if let Some(provider) = provider_for_model_id(pattern) {
+            enrich_providers.insert(provider);
+        }
+        literals.push(pattern.to_string());
     }
 
-    for provider in fetch_providers {
-        match fetch_provider_models(http, credentials, provider).await {
-            Ok(models) if !models.is_empty() => result.extend(models),
+    let mut windows = HashMap::new();
+    for provider in &fetch_providers {
+        match fetch_provider_models(http, credentials, *provider).await {
+            Ok(models) if !models.is_empty() => {
+                record_windows(&models, &mut windows);
+                result.extend(models);
+            }
             _ => result.push(model_entry(&format!("{}:*", provider.as_str()))),
         }
+    }
+
+    for provider in enrich_providers.difference(&fetch_providers) {
+        if !credentials.has_key(*provider) {
+            continue;
+        }
+        match fetch_provider_models(http, credentials, *provider).await {
+            Ok(models) => record_windows(&models, &mut windows),
+            Err(err) => warn!(
+                provider = %provider,
+                error = %err,
+                "failed to enrich literal model context windows"
+            ),
+        }
+    }
+
+    for id in literals {
+        let context_length = context_for_literal(&id, &windows);
+        result.push(model_entry_with_context(&id, context_length));
     }
 
     dedupe_sort_models(&mut result);
@@ -295,6 +366,25 @@ mod tests {
             upstream_context_length(&json!({"id": "gpt-4o", "context_length": 0})),
         );
         assert!(zero.get("context_length").is_none());
+    }
+
+    #[test]
+    fn literal_ids_use_catalog_windows() {
+        let mut windows = HashMap::new();
+        windows.insert(
+            "openrouter:deepseek/deepseek-v4.1-flash".to_string(),
+            1_048_576,
+        );
+        windows.insert("openai:text-embedding-3-small".to_string(), 8_191);
+        assert_eq!(
+            context_for_literal("openrouter:deepseek/deepseek-v4.1-flash", &windows),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            context_for_literal("openai:embedding:text-embedding-3-small", &windows),
+            Some(8_191)
+        );
+        assert_eq!(context_for_literal("openai:gpt-6-luna", &windows), None);
     }
 
     #[tokio::test]

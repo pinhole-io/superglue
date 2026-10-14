@@ -686,6 +686,72 @@ async fn list_models_fetches_upstream_for_master_key() {
 }
 
 #[tokio::test]
+async fn list_models_enriches_literal_allowlist_windows() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [
+                {
+                    "id": "deepseek/deepseek-v4.1-flash",
+                    "object": "model",
+                    "context_length": 1_048_576
+                }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_provider(
+        MASTER_KEY,
+        &dir.path().join("gw.db"),
+        ProviderId::OpenRouter,
+        &server.uri(),
+        "or-test",
+    );
+    let app = router(state);
+
+    app.clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/users",
+            MASTER_KEY,
+            Some(json!({ "user_id": "user-literal" })),
+        ))
+        .await
+        .unwrap();
+    let key_resp = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({
+                "user_id": "user-literal",
+                "allowed_models": ["openrouter:deepseek/deepseek-v4.1-flash"]
+            })),
+        ))
+        .await
+        .unwrap();
+    let virtual_key = body_to_json(key_resp.into_body()).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .oneshot(auth_request("GET", "/v1/models", &virtual_key, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_to_json(resp.into_body()).await;
+    let models = body["data"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["id"], "openrouter:deepseek/deepseek-v4.1-flash");
+    assert_eq!(models[0]["context_length"], 1_048_576);
+}
+
+#[tokio::test]
 async fn health_endpoints_work() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(MASTER_KEY, &dir.path().join("gw.db"));
