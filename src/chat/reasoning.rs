@@ -104,15 +104,24 @@ fn model_lower(model: &str) -> String {
     model.trim().to_ascii_lowercase()
 }
 
+/// Bare model id after an optional `provider:` prefix.
+fn model_name(model: &str) -> String {
+    let lower = model_lower(model);
+    match lower.split_once(':') {
+        Some((_, rest)) if !rest.is_empty() => rest.to_string(),
+        _ => lower,
+    }
+}
+
 fn is_gpt5_family(model: &str) -> bool {
-    let m = model_lower(model);
+    let m = model_name(model);
     // gpt-5.* and gpt-6.* (e.g. gpt-6-luna) share chat reasoning_effort levels,
     // including `none` required when function tools use /v1/chat/completions.
     m.starts_with("gpt-5") || m.contains("gpt-5.") || m.starts_with("gpt-6") || m.contains("gpt-6.")
 }
 
 fn is_o_series(model: &str) -> bool {
-    let m = model_lower(model);
+    let m = model_name(model);
     m.starts_with("o1")
         || m.starts_with("o3")
         || m.starts_with("o4")
@@ -140,6 +149,22 @@ fn supported_efforts(model: &str) -> &'static [ReasoningEffort] {
         &O_SERIES_EFFORTS
     } else if is_deepseek_family(model) {
         &DEEPSEEK_EFFORTS
+    } else {
+        &[]
+    }
+}
+
+/// Effort strings this model accepts, in preference order.
+///
+/// An empty slice means SuperGlue has no table for the model.
+#[must_use]
+pub fn supported_reasoning_efforts(model: &str) -> &'static [&'static str] {
+    if is_gpt5_family(model) {
+        &["none", "minimal", "low", "medium", "high", "xhigh"]
+    } else if is_o_series(model) {
+        &["low", "medium", "high"]
+    } else if is_deepseek_family(model) {
+        &["none", "low", "medium", "high", "max"]
     } else {
         &[]
     }
@@ -226,6 +251,10 @@ mod tests {
             Some("none")
         );
         assert!(!supports_chat_sampling_params("gpt-6-luna"));
+        assert_eq!(
+            supported_reasoning_efforts("openai:gpt-6-luna"),
+            ["none", "minimal", "low", "medium", "high", "xhigh"]
+        );
     }
 
     #[test]
