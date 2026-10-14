@@ -14,6 +14,10 @@ use crate::http::{HttpClient, join_base_url};
 use crate::providers::{ProviderCredentials, ProviderId};
 
 fn model_entry(id: &str) -> Value {
+    model_entry_with_context(id, None)
+}
+
+fn model_entry_with_context(id: &str, context_length: Option<u32>) -> Value {
     let capabilities = match id
         .split_once(':')
         .and_then(|(_, model)| model.strip_prefix("embedding:"))
@@ -21,12 +25,23 @@ fn model_entry(id: &str) -> Value {
         Some(model) if !model.is_empty() && !model.contains('*') => vec!["embedding"],
         _ => Vec::new(),
     };
-    json!({
+    let mut entry = json!({
         "id": id,
         "object": "model",
         "owned_by": "superglue-gateway",
         "capabilities": capabilities,
-    })
+    });
+    if let Some(tokens) = context_length.filter(|n| *n > 0) {
+        entry["context_length"] = json!(tokens);
+    }
+    entry
+}
+
+/// Positive context window from an upstream model object.
+fn upstream_context_length(entry: &Value) -> Option<u32> {
+    let value = entry.get("context_length")?;
+    let n = value.as_u64().or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))?;
+    u32::try_from(n).ok().filter(|n| *n > 0)
 }
 
 fn dedupe_sort_models(models: &mut Vec<Value>) {
@@ -135,7 +150,10 @@ async fn fetch_provider_models(
         .iter()
         .filter_map(|entry| {
             let id = entry["id"].as_str()?;
-            Some(model_entry(&format!("{}:{id}", provider.as_str())))
+            Some(model_entry_with_context(
+                &format!("{}:{id}", provider.as_str()),
+                upstream_context_length(entry),
+            ))
         })
         .collect())
 }
@@ -172,7 +190,10 @@ async fn fetch_typesafe_models_inner(
             .iter()
             .filter_map(|entry| {
                 let id = entry["name"].as_str().or_else(|| entry["id"].as_str())?;
-                Some(model_entry(&format!("typesafe:{id}")))
+                Some(model_entry_with_context(
+                    &format!("typesafe:{id}"),
+                    upstream_context_length(entry),
+                ))
             })
             .collect::<Vec<_>>()
     });
@@ -185,7 +206,10 @@ async fn fetch_typesafe_models_inner(
             .iter()
             .filter_map(|entry| {
                 let id = entry["id"].as_str().or_else(|| entry["name"].as_str())?;
-                Some(model_entry(&format!("typesafe:{id}")))
+                Some(model_entry_with_context(
+                    &format!("typesafe:{id}"),
+                    upstream_context_length(entry),
+                ))
             })
             .collect::<Vec<_>>()
     });
@@ -248,7 +272,29 @@ mod tests {
             .find(|model| model["id"] == "openai:gpt-4o-mini")
             .unwrap();
         assert_eq!(chat["capabilities"], json!([]));
+        assert!(chat.get("context_length").is_none());
         assert_eq!(model_entry("openai:embedding:*")["capabilities"], json!([]));
+    }
+
+    #[test]
+    fn upstream_context_length_is_copied() {
+        let with_window = model_entry_with_context(
+            "openrouter:deepseek/deepseek-v4.1-flash",
+            upstream_context_length(&json!({"id": "deepseek/deepseek-v4.1-flash", "context_length": 1_048_576})),
+        );
+        assert_eq!(with_window["context_length"], json!(1_048_576));
+
+        let missing = model_entry_with_context(
+            "openai:gpt-4o",
+            upstream_context_length(&json!({"id": "gpt-4o"})),
+        );
+        assert!(missing.get("context_length").is_none());
+
+        let zero = model_entry_with_context(
+            "openai:gpt-4o",
+            upstream_context_length(&json!({"id": "gpt-4o", "context_length": 0})),
+        );
+        assert!(zero.get("context_length").is_none());
     }
 
     #[tokio::test]
