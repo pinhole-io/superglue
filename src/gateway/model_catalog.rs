@@ -40,7 +40,9 @@ fn model_entry_with_context(id: &str, context_length: Option<u32>) -> Value {
 /// Positive context window from an upstream model object.
 fn upstream_context_length(entry: &Value) -> Option<u32> {
     let value = entry.get("context_length")?;
-    let n = value.as_u64().or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))?;
+    let n = value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))?;
     u32::try_from(n).ok().filter(|n| *n > 0)
 }
 
@@ -351,7 +353,9 @@ mod tests {
     fn upstream_context_length_is_copied() {
         let with_window = model_entry_with_context(
             "openrouter:deepseek/deepseek-v4.1-flash",
-            upstream_context_length(&json!({"id": "deepseek/deepseek-v4.1-flash", "context_length": 1_048_576})),
+            upstream_context_length(
+                &json!({"id": "deepseek/deepseek-v4.1-flash", "context_length": 1_048_576}),
+            ),
         );
         assert_eq!(with_window["context_length"], json!(1_048_576));
 

@@ -16,8 +16,8 @@ use crate::agents::{AgentEngine, AgentSpec};
 use crate::audit::{RunRecorder, RunStore, now_ms};
 use crate::batch::{BatchConfig, BatchError, BatchRequest, BatchResponse, batch_complete};
 use crate::chat::{
-    ChatError, ChatOptions, CompletionOutcome, Conversation, StreamOutcome, complete_with_tools,
-    stream_complete, stream_complete_with_tools,
+    ChatError, ChatOptions, CompletionOutcome, Conversation, StreamOutcome, StreamToolOutcome,
+    complete_with_tools, stream_complete, stream_complete_with_tools,
 };
 use crate::context::SummarizeContextConfig;
 use crate::events::{StatusEmitter, StatusSubscriber};
@@ -31,7 +31,9 @@ use crate::http::{Error as HttpError, HttpClient};
 use crate::openai::ChatMessage;
 use crate::responses::{
     ResponseError, ResponseOutcome, ResponseStreamOutcome,
-    complete_with_tools as complete_response_with_tools, stream_response as stream_response_api,
+    complete_with_tools as complete_response_with_tools,
+    stream_complete_with_tools as stream_responses_with_tools,
+    stream_response as stream_response_api,
 };
 use crate::tools::{Tool, ToolMode, ToolRegistry};
 
@@ -979,6 +981,56 @@ impl ClientConversation {
                 .await;
         }
         result
+    }
+
+    /// Stream one turn. `on_delta` receives reply text. `on_reasoning_delta` receives thinking text.
+    ///
+    /// OpenAI uses the Responses stream so a reasoning summary can arrive while tools stay enabled.
+    /// Other providers use chat completions. The caller-visible history is replaced on success.
+    pub async fn stream<FO, FR>(
+        &mut self,
+        call: CallOptions,
+        on_delta: FO,
+        on_reasoning_delta: FR,
+    ) -> Result<StreamToolOutcome, ChatError>
+    where
+        FO: FnMut(String) + Send,
+        FR: FnMut(String) + Send,
+    {
+        let http = effective_http(&self.inner.http, call.timeout, call.connect_timeout)?;
+        let options = finalize_call_options(&self.inner.options, &call);
+        ensure_client_audit_ready(&self.inner).await;
+        let messages = self.conversation.messages.clone();
+        let openai = crate::providers::parse_model_ref(&options.model).provider
+            == crate::providers::ProviderId::OpenAi;
+        let outcome = if openai {
+            stream_responses_with_tools(
+                &http,
+                &self.inner.registry,
+                &self.inner.hooks,
+                &self.inner.guardrails,
+                messages,
+                &options,
+                on_delta,
+                on_reasoning_delta,
+            )
+            .await
+            .map_err(ChatError::from)?
+        } else {
+            stream_complete_with_tools(
+                &http,
+                &self.inner.registry,
+                &self.inner.hooks,
+                &self.inner.guardrails,
+                messages,
+                &options,
+                on_delta,
+                on_reasoning_delta,
+            )
+            .await?
+        };
+        self.conversation.messages = outcome.messages.clone();
+        Ok(outcome)
     }
 }
 
