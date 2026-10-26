@@ -1,4 +1,4 @@
-//! Known provider identifiers (`openai`, `anthropic`, `xai`, `groq`, `openrouter`, `runinfra`, `vercel`, `typesafe`).
+//! Known provider identifiers (`openai`, `anthropic`, `xai`, `groq`, `openrouter`, `runinfra`, `vercel`, `bedrock`, `typesafe`).
 
 use std::fmt;
 use std::str::FromStr;
@@ -14,6 +14,7 @@ pub enum ProviderId {
     OpenRouter,
     RunInfra,
     Vercel,
+    Bedrock,
     TypeSafe,
 }
 
@@ -22,7 +23,7 @@ pub enum ProviderId {
 pub struct UnknownProvider(pub String);
 
 impl ProviderId {
-    pub const ALL: [ProviderId; 8] = [
+    pub const ALL: [ProviderId; 9] = [
         ProviderId::OpenAi,
         ProviderId::Anthropic,
         ProviderId::Xai,
@@ -30,6 +31,7 @@ impl ProviderId {
         ProviderId::OpenRouter,
         ProviderId::RunInfra,
         ProviderId::Vercel,
+        ProviderId::Bedrock,
         ProviderId::TypeSafe,
     ];
 
@@ -43,6 +45,7 @@ impl ProviderId {
             ProviderId::OpenRouter => "openrouter",
             ProviderId::RunInfra => "runinfra",
             ProviderId::Vercel => "vercel",
+            ProviderId::Bedrock => "bedrock",
             ProviderId::TypeSafe => "typesafe",
         }
     }
@@ -57,6 +60,7 @@ impl ProviderId {
             ProviderId::OpenRouter => "OpenRouter",
             ProviderId::RunInfra => "RunInfra",
             ProviderId::Vercel => "Vercel",
+            ProviderId::Bedrock => "Amazon Bedrock",
             ProviderId::TypeSafe => "TypeSafe",
         }
     }
@@ -71,6 +75,7 @@ impl ProviderId {
             ProviderId::OpenRouter => "https://openrouter.ai/api",
             ProviderId::RunInfra => "https://api.runinfra.ai",
             ProviderId::Vercel => "https://ai-gateway.vercel.sh",
+            ProviderId::Bedrock => "https://bedrock-runtime.us-east-1.amazonaws.com/openai",
             ProviderId::TypeSafe => "https://api.typesafe.ai",
         }
     }
@@ -85,6 +90,7 @@ impl ProviderId {
             ProviderId::OpenRouter => "OPENROUTER_API_KEY",
             ProviderId::RunInfra => "RUNINFRA_GATEWAY_KEY",
             ProviderId::Vercel => "VERCEL_GATEWAY_KEY",
+            ProviderId::Bedrock => "AWS_BEARER_TOKEN_BEDROCK",
             ProviderId::TypeSafe => "TYPESAFE_API_KEY",
         }
     }
@@ -99,6 +105,7 @@ impl ProviderId {
                 | ProviderId::OpenRouter
                 | ProviderId::RunInfra
                 | ProviderId::Vercel
+                | ProviderId::Bedrock
         )
     }
 
@@ -113,7 +120,10 @@ impl ProviderId {
     pub fn passthrough_reasoning_effort(self) -> bool {
         matches!(
             self,
-            ProviderId::OpenRouter | ProviderId::RunInfra | ProviderId::Vercel
+            ProviderId::OpenRouter
+                | ProviderId::RunInfra
+                | ProviderId::Vercel
+                | ProviderId::Bedrock
         )
     }
 
@@ -146,6 +156,22 @@ impl ProviderId {
     pub fn supports_chat(self) -> bool {
         self.uses_openai_compat() || matches!(self, ProviderId::Anthropic)
     }
+
+    /// Whether the provider exposes OpenAI-compatible `/v1/embeddings`.
+    ///
+    /// The Bedrock OpenAI endpoint serves chat and Responses. It does not serve embeddings.
+    #[must_use]
+    pub fn supports_embeddings(self) -> bool {
+        self.uses_openai_compat() && !matches!(self, ProviderId::Bedrock)
+    }
+
+    /// Whether `GET /v1/models` returns a catalog.
+    ///
+    /// Bedrock runtime does not implement that route.
+    #[must_use]
+    pub fn lists_models(self) -> bool {
+        !matches!(self, ProviderId::Bedrock)
+    }
 }
 
 impl fmt::Display for ProviderId {
@@ -166,6 +192,7 @@ impl FromStr for ProviderId {
             "openrouter" => Ok(ProviderId::OpenRouter),
             "runinfra" => Ok(ProviderId::RunInfra),
             "vercel" => Ok(ProviderId::Vercel),
+            "bedrock" => Ok(ProviderId::Bedrock),
             "typesafe" => Ok(ProviderId::TypeSafe),
             other => Err(UnknownProvider(other.to_string())),
         }
@@ -233,5 +260,35 @@ mod tests {
         assert!(ProviderId::OpenAi.supports_chat());
         assert!(ProviderId::Anthropic.supports_chat());
         assert!(!ProviderId::OpenAi.uses_system_one());
+    }
+
+    #[test]
+    fn parses_bedrock_prefix() {
+        assert_eq!(
+            ProviderId::from_str("bedrock").unwrap(),
+            ProviderId::Bedrock
+        );
+        assert_eq!(ProviderId::Bedrock.as_str(), "bedrock");
+        assert_eq!(ProviderId::Bedrock.display_name(), "Amazon Bedrock");
+        assert_eq!(
+            ProviderId::Bedrock.env_var_for_key(),
+            "AWS_BEARER_TOKEN_BEDROCK"
+        );
+        assert_eq!(
+            ProviderId::Bedrock.default_base_url(),
+            "https://bedrock-runtime.us-east-1.amazonaws.com/openai"
+        );
+        assert!(ProviderId::Bedrock.uses_openai_compat());
+        assert!(ProviderId::Bedrock.uses_responses_api());
+        assert!(ProviderId::Bedrock.passthrough_reasoning_effort());
+        assert!(ProviderId::Bedrock.supports_chat());
+        assert!(!ProviderId::Bedrock.supports_embeddings());
+        assert!(ProviderId::OpenAi.supports_embeddings());
+        assert!(!ProviderId::Bedrock.lists_models());
+        assert!(ProviderId::OpenAi.lists_models());
+        assert!(!ProviderId::Bedrock.requires_client_request_id());
+        assert!(!ProviderId::Bedrock.uses_legacy_max_tokens());
+        assert!(!ProviderId::Bedrock.exposes_generation_cost());
+        assert!(!ProviderId::Bedrock.uses_system_one());
     }
 }

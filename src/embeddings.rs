@@ -78,7 +78,7 @@ pub enum EmbedError {
 /// Whether a provider exposes an OpenAI-compatible embeddings endpoint.
 #[must_use]
 pub fn supports_embeddings(provider: ProviderId) -> bool {
-    provider.uses_openai_compat()
+    provider.supports_embeddings()
 }
 
 /// Generate vectors with an OpenAI-compatible embedding model.
@@ -165,4 +165,31 @@ fn parse_embedding_response(value: serde_json::Value) -> Result<EmbeddingOutcome
         embeddings,
         usage: response.usage,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bedrock_embeddings_are_rejected() {
+        let http = HttpClient::new(crate::http::ClientConfig::default()).unwrap();
+        let mut credentials = ProviderCredentials::new();
+        credentials.insert_key(ProviderId::Bedrock, "bedrock-test");
+        let err = embed(
+            &http,
+            &credentials,
+            EmbeddingRequest {
+                model: "bedrock:amazon.titan-embed-text-v2:0".into(),
+                input: EmbeddingInput::Text("hello".into()),
+                dimensions: None,
+            },
+        )
+        .await
+        .expect_err("bedrock has no embeddings route");
+        assert!(matches!(
+            err,
+            EmbedError::UnsupportedProvider(ProviderId::Bedrock)
+        ));
+    }
 }

@@ -1,4 +1,4 @@
-//! OpenAI-compatible chat API (OpenAI, Groq, xAI, OpenRouter, RunInfra, Vercel).
+//! OpenAI-compatible chat API (OpenAI, Groq, xAI, OpenRouter, RunInfra, Vercel, Amazon Bedrock).
 
 use std::collections::HashMap;
 
@@ -649,6 +649,79 @@ mod tests {
         assert_eq!(
             req.body.get("model").and_then(|v| v.as_str()),
             Some("anthropic/claude-opus-5")
+        );
+    }
+
+    #[test]
+    fn bedrock_chat_request_uses_openai_runtime_and_keeps_model_colon() {
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::Bedrock, "bedrock-test");
+        let model_ref = ModelRef {
+            provider: ProviderId::Bedrock,
+            capability: None,
+            model: "openai.gpt-oss-120b-1:0".into(),
+            raw: "bedrock:openai.gpt-oss-120b-1:0".into(),
+        };
+        let options = ChatOptions {
+            max_completion_tokens: Some(128),
+            reasoning_effort: Some("low".into()),
+            ..Default::default()
+        };
+        let messages = [ChatMessage::text("user", "Hello")];
+        let req = OpenAiCompatProvider::new(ProviderId::Bedrock).build_chat_request(
+            &ProviderRequestContext {
+                model_ref: &model_ref,
+                credentials: &creds,
+                messages: &messages,
+                tools: None,
+                chat_tools: None,
+                stream: false,
+                options: &options,
+            },
+        );
+        assert_eq!(
+            req.url,
+            "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
+        );
+        assert!(
+            req.headers
+                .iter()
+                .any(|(k, v)| k == "Authorization" && v == "Bearer bedrock-test")
+        );
+        assert_eq!(
+            req.body
+                .get("max_completion_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(128)
+        );
+        assert_eq!(
+            req.body.get("reasoning_effort").and_then(|v| v.as_str()),
+            Some("low")
+        );
+        assert_eq!(
+            req.body.get("model").and_then(|v| v.as_str()),
+            Some("openai.gpt-oss-120b-1:0")
+        );
+
+        let body = json!({"model": "bedrock:openai.gpt-oss-120b-1:0", "input": "hi"});
+        let responses = OpenAiCompatProvider::new(ProviderId::Bedrock).build_responses_request(
+            &ProviderResponsesContext {
+                model_ref: &model_ref,
+                credentials: &creds,
+                body: &body,
+                messages: &messages,
+                tools: None,
+                stream: false,
+                options: &options,
+            },
+        );
+        assert_eq!(
+            responses.url,
+            "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/responses"
+        );
+        assert_eq!(
+            responses.body.get("model").and_then(|v| v.as_str()),
+            Some("openai.gpt-oss-120b-1:0")
         );
     }
 

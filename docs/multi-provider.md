@@ -13,8 +13,24 @@ Superglue chat models use a `provider:model` string (for example `openai:gpt-4o-
 | OpenRouter | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` |
 | RunInfra | `RUNINFRA_GATEWAY_KEY` | `RUNINFRA_BASE_URL` |
 | Vercel AI Gateway | `VERCEL_GATEWAY_KEY` | `VERCEL_BASE_URL` |
+| Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK` | `BEDROCK_BASE_URL` |
 
 Bindings load these via `ProviderCredentials::from_env()` when constructing a client. You can override per provider with `api_keys` (Python/JS/Kotlin) or `ClientBuilder` in Rust.
+
+## Amazon Bedrock
+
+Use a Bedrock API key. `BEDROCK_API_KEY` is accepted when `AWS_BEARER_TOKEN_BEDROCK` is unset. The client sends `Authorization: Bearer`.
+
+The default base URL is `https://bedrock-runtime.us-east-1.amazonaws.com/openai`. Set `AWS_REGION` or `AWS_DEFAULT_REGION` to change the Region. `BEDROCK_BASE_URL` overrides both. Leave the `/v1` suffix off the base URL. The client appends `/v1/chat/completions` and `/v1/responses`.
+
+A model id can contain a colon. Only the first colon selects the provider:
+
+```text
+bedrock:openai.gpt-oss-120b-1:0
+bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
+```
+
+Bedrock does not publish `GET /v1/models`. Name each model on the gateway allowlist. Embeddings and the Files API are not on this route.
 
 ## Per-key rate limits
 
@@ -25,8 +41,8 @@ Pass `requests_per_second_for` (Python) / `requestsPerSecondFor` (JS/Kotlin) as 
 Rust callers can use `Client::embed` or `Client::embed_many` with a
 `provider:model` string. OpenAI-compatible providers use `/v1/embeddings`.
 
-The gateway exposes the same shape at `POST /v1/embeddings`. Anthropic and
-TypeSafe do not support this capability.
+The gateway exposes the same shape at `POST /v1/embeddings`. Anthropic,
+Amazon Bedrock, and TypeSafe do not support this capability.
 
 Use `provider:embedding:model` for a model that must appear in an embedding
 catalog. For example, use `openai:embedding:text-embedding-3-small`.

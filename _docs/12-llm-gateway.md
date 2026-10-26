@@ -205,7 +205,7 @@ Token counts are logged from provider responses. USD cost uses the static rates 
 
 ## Provider credentials
 
-Upstream provider API keys are loaded from environment variables on the server (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` or `OPENROUTER_GATEWAY_KEY`, `RUNINFRA_GATEWAY_KEY`, `VERCEL_GATEWAY_KEY`, `TYPESAFE_API_KEY`, `OPENAI_BASE_URL`, `TYPESAFE_BASE_URL`). Clients never see provider credentials.
+Upstream provider API keys are loaded from environment variables on the server (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` or `OPENROUTER_GATEWAY_KEY`, `RUNINFRA_GATEWAY_KEY`, `VERCEL_GATEWAY_KEY`, `AWS_BEARER_TOKEN_BEDROCK` or `BEDROCK_API_KEY`, `TYPESAFE_API_KEY`, `OPENAI_BASE_URL`, `TYPESAFE_BASE_URL`, `BEDROCK_BASE_URL`). Bedrock also reads `AWS_REGION` or `AWS_DEFAULT_REGION` when `BEDROCK_BASE_URL` is unset. Clients never see provider credentials.
 
 ## System One (TypeSafe)
 

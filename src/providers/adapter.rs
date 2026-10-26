@@ -166,6 +166,13 @@ mod tests {
     }
 
     #[test]
+    fn resolve_provider_keeps_bedrock_on_openai_compat() {
+        let model_ref = parse_model_ref("bedrock:openai.gpt-oss-120b-1:0");
+        let provider = resolve_provider(&model_ref).expect("Bedrock is chat");
+        assert_eq!(provider.provider_id(), ProviderId::Bedrock);
+    }
+
+    #[test]
     fn resolve_provider_keeps_anthropic() {
         let model_ref = parse_model_ref("anthropic:claude-sonnet-4");
         let provider = resolve_provider(&model_ref).expect("Anthropic is chat");

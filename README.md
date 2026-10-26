@@ -276,10 +276,13 @@ Use `provider:model` for chat. The prefix selects the key and the base URL. The 
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 | RunInfra | `runinfra` | `RUNINFRA_GATEWAY_KEY` |
 | Vercel AI Gateway | `vercel` | `VERCEL_GATEWAY_KEY` |
+| Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK` |
 
-OpenRouter also accepts `OPENROUTER_GATEWAY_KEY` when `OPENROUTER_API_KEY` is unset.
+OpenRouter also accepts `OPENROUTER_GATEWAY_KEY` when `OPENROUTER_API_KEY` is unset. Bedrock also accepts `BEDROCK_API_KEY` when `AWS_BEARER_TOKEN_BEDROCK` is unset.
 
-The environment loader reads two base URL overrides: `OPENAI_BASE_URL` and `TYPESAFE_BASE_URL`. Set `OPENAI_BASE_URL` for an OpenAI-compatible host such as Ollama. Set any other base URL on the client with `ClientBuilder::base_url_for` in Rust, or the matching option in a binding.
+The environment loader reads `OPENAI_BASE_URL`, `TYPESAFE_BASE_URL`, and `BEDROCK_BASE_URL`. Set `OPENAI_BASE_URL` for an OpenAI-compatible host such as Ollama. For Bedrock, `AWS_REGION` or `AWS_DEFAULT_REGION` selects the runtime host when `BEDROCK_BASE_URL` is unset. The default Region is `us-east-1`. Set any other base URL on the client with `ClientBuilder::base_url_for` in Rust, or the matching option in a binding.
+
+A Bedrock model id can contain a colon. The provider prefix is only the first colon. Example: `bedrock:openai.gpt-oss-120b-1:0`. The client sends that key as `Authorization: Bearer`. The base URL has no `/v1` suffix: `https://bedrock-runtime.us-east-1.amazonaws.com/openai`.
 
 TypeSafe (`TYPESAFE_API_KEY`) is the System One evaluation API. It is separate from the chat providers above.
 

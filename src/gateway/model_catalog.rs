@@ -192,6 +192,9 @@ async fn fetch_provider_models(
     if provider == ProviderId::TypeSafe {
         return fetch_typesafe_models(http, credentials).await;
     }
+    if !provider.lists_models() {
+        return Ok(Vec::new());
+    }
 
     let key = credentials
         .key_for(provider)
@@ -389,6 +392,18 @@ mod tests {
             Some(8_191)
         );
         assert_eq!(context_for_literal("openai:gpt-6-luna", &windows), None);
+    }
+
+    #[tokio::test]
+    async fn bedrock_catalog_status_skips_upstream() {
+        let http = HttpClient::new(crate::http::ClientConfig::default()).unwrap();
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::Bedrock, "bedrock-test");
+        creds.insert_base_url(ProviderId::Bedrock, "http://127.0.0.1:1");
+        let count = fetch_provider_models_for_status(&http, &creds, ProviderId::Bedrock)
+            .await
+            .expect("bedrock catalog is empty without a request");
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]

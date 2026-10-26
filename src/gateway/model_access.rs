@@ -71,6 +71,14 @@ mod tests {
     fn provider_wildcard() {
         assert!(is_allowed("openai:gpt-4o-mini", &["openai:*".into()]));
         assert!(!is_allowed("anthropic:claude", &["openai:*".into()]));
+        assert!(is_allowed(
+            "bedrock:openai.gpt-oss-120b-1:0",
+            &["bedrock:*".into()]
+        ));
+        assert!(is_allowed(
+            "bedrock:openai.gpt-oss-120b-1:0",
+            &["bedrock:openai.gpt-oss-120b-1:0".into()]
+        ));
     }
 
     #[test]

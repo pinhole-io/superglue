@@ -67,7 +67,7 @@ struct OpenAiFileResponse {
     bytes: Option<u32>,
 }
 
-/// Upload a file to provider storage (OpenAI / xAI). Groq, OpenRouter, RunInfra, Vercel, and TypeSafe are unsupported; Anthropic uses inline bytes.
+/// Upload a file to provider storage (OpenAI / xAI). Groq, OpenRouter, RunInfra, Vercel, Bedrock, and TypeSafe are unsupported; Anthropic uses inline bytes.
 pub async fn upload_file(
     http: &HttpClient,
     credentials: &ProviderCredentials,
@@ -82,6 +82,7 @@ pub async fn upload_file(
             | ProviderId::OpenRouter
             | ProviderId::RunInfra
             | ProviderId::Vercel
+            | ProviderId::Bedrock
             | ProviderId::TypeSafe
     ) {
         return Err(FileError::UnsupportedProvider(provider));
@@ -210,5 +211,32 @@ fn mime_from_filename(filename: &str) -> &'static str {
         "application/json"
     } else {
         "application/octet-stream"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn bedrock_file_upload_is_unsupported() {
+        let http = HttpClient::new(crate::http::ClientConfig::default()).unwrap();
+        let credentials = ProviderCredentials::new();
+        let err = upload_file(
+            &http,
+            &credentials,
+            ProviderId::Bedrock,
+            Path::new("missing.bin"),
+            FilePurpose::UserData,
+            1024,
+        )
+        .await
+        .expect_err("bedrock has no files route");
+        assert!(matches!(
+            err,
+            FileError::UnsupportedProvider(ProviderId::Bedrock)
+        ));
     }
 }

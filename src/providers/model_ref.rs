@@ -156,6 +156,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_bedrock_model_id_with_colon() {
+        let r = parse_model_ref("bedrock:openai.gpt-oss-120b-1:0");
+        assert_eq!(r.provider, ProviderId::Bedrock);
+        assert_eq!(r.model, "openai.gpt-oss-120b-1:0");
+        assert_eq!(r.qualified(), "bedrock:openai.gpt-oss-120b-1:0");
+        let wired = wire_model_id(
+            &r,
+            ProviderId::Bedrock.default_base_url(),
+            ProviderId::Bedrock,
+        );
+        assert_eq!(wired, "openai.gpt-oss-120b-1:0");
+    }
+
+    #[test]
     fn parses_vercel_slash_model() {
         let r = parse_model_ref("vercel:anthropic/claude-opus-5");
         assert_eq!(r.provider, ProviderId::Vercel);

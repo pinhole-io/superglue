@@ -10,6 +10,7 @@ export const SYSTEM2_PROVIDERS = [
   'openrouter',
   'runinfra',
   'vercel',
+  'bedrock',
 ] as const
 
 export type System2Provider = (typeof SYSTEM2_PROVIDERS)[number]
@@ -95,6 +96,7 @@ export function providerLabel(provider: string): string {
     openrouter: 'OpenRouter',
     runinfra: 'RunInfra',
     vercel: 'Vercel',
+    bedrock: 'Amazon Bedrock',
     typesafe: 'TypeSafe',
   }
   return labels[provider] ?? provider
@@ -110,6 +112,8 @@ export function providerTooltip(providerId: string): string {
       return 'System 1 only. Calls POST /v1/systemone. Does not support chat or embeddings.'
     case 'anthropic':
       return 'System 2 chat and Responses. Does not support embeddings.'
+    case 'bedrock':
+      return 'System 2 chat and Responses on the Bedrock OpenAI endpoint. No embeddings and no model list. Auth is AWS_BEARER_TOKEN_BEDROCK.'
     case 'openai':
     case 'groq':
       return 'System 2 chat and Responses. Also supports POST /v1/audio/transcriptions.'
