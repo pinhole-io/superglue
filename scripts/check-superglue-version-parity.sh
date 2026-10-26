@@ -29,6 +29,9 @@ check_file_version() {
 echo "Checking superglue version parity (workspace: $VERSION)"
 
 check_file_version "superglue-js package.json" "$ROOT/superglue-js/package.json" "\"version\": \"${VERSION}\""
+check_file_version "superglue-js index.js" "$ROOT/superglue-js/index.js" "'${VERSION}'"
+check_file_version "superglue-py pyproject.toml" "$ROOT/superglue-py/pyproject.toml" "version = \"${VERSION}\""
+check_file_version "kt version" "$ROOT/superglue-kt/superglue-android/build.gradle.kts" "version = \"${VERSION}\""
 check_file_version "kt superglueLibraryVersion" "$ROOT/superglue-kt/superglue-android/build.gradle.kts" "superglueLibraryVersion = \"${VERSION}\""
 
 if command -v cargo >/dev/null 2>&1; then

@@ -1,0 +1,125 @@
+# Build wheels for the documented targets and publish them to PyPI.
+# A GitHub Release tagged v<version> starts the job.
+# workflow_dispatch builds the same artifacts. Set publish to upload them.
+
+name: Publish Python
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload this commit to PyPI
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the release tag to match the workspace version
+        if: github.event_name == 'release' || inputs.publish
+        run: bash scripts/require-release-tag.sh
+
+  wheels:
+    needs: guard
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: "2_28"
+            artifact: wheels-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: "2_28"
+            artifact: wheels-linux-aarch64
+          - os: macos-latest
+            target: aarch64
+            manylinux: "off"
+            artifact: wheels-macos-aarch64
+          - os: macos-15-intel
+            target: x86_64
+            manylinux: "off"
+            artifact: wheels-macos-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CPython
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.12
+            3.13
+            3.14
+            3.14t
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          working-directory: superglue-py
+          rust-toolchain: stable
+          cache: sccache
+          args: --release --locked --compatibility pypi --out dist -i python3.12 -i python3.13 -i python3.14 -i python3.14t
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.artifact }}
+          path: superglue-py/dist
+          if-no-files-found: error
+
+  sdist:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          working-directory: superglue-py
+          rust-toolchain: stable
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: superglue-py/dist
+          if-no-files-found: error
+
+  publish:
+    needs: [wheels, sdist]
+    if: github.event_name == 'release' || inputs.publish
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Upload wheels to the GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+          attestations: true

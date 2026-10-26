@@ -1,0 +1,169 @@
+# Build the Android AAR and publish it to Maven Central.
+# A GitHub Release tagged v<version> starts the job.
+# The AAR is always attached to that release.
+# Without Central credentials the registry upload fails and the release asset remains.
+
+name: Publish Kotlin
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload this commit to Maven Central
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-maven-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the release tag to match the workspace version
+        if: github.event_name == 'release' || inputs.publish
+        run: bash scripts/require-release-tag.sh
+
+  publish:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: maven
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: superglue-kt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-registry-
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up the Android SDK and NDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-36 ndk;27.2.12479018"
+      - name: Export the NDK path
+        working-directory: .
+        run: |
+          set -euo pipefail
+          ndk="${ANDROID_SDK_ROOT}/ndk/27.2.12479018"
+          if [[ ! -d "$ndk" ]]; then
+            echo "NDK directory is missing: ${ndk}"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=${ndk}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ndk}" >> "$GITHUB_ENV"
+      - name: Build the release AAR
+        run: ./gradlew :superglue-android:assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: superglue-android-aar
+          path: superglue-kt/superglue-android/build/outputs/aar/superglue-android-release.aar
+          if-no-files-found: error
+      - name: Upload the AAR to the GitHub release
+        if: github.event_name == 'release'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          src="superglue-kt/superglue-android/build/outputs/aar/superglue-android-release.aar"
+          dest="superglue-android-${version}.aar"
+          test -f "$src"
+          cp "$src" "$dest"
+          gh release upload "$GITHUB_REF_NAME" "$dest" --clobber
+      - name: Publish to Maven Central
+        if: github.event_name == 'release' || inputs.publish
+        env:
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CENTRAL_TOKEN}" || -z "${GPG_PRIVATE_KEY}" ]]; then
+            echo "CENTRAL_TOKEN or GPG_PRIVATE_KEY is not set."
+            echo "Download the AAR from the GitHub release assets."
+            exit 1
+          fi
+          ./gradlew :superglue-android:publishReleasePublicationToLocalRepository --no-daemon
+          repo="superglue-android/build/repo"
+          if ! find "$repo" -name "*.asc" -print -quit | grep -q .; then
+            echo "The local Maven repo has no signatures."
+            exit 1
+          fi
+          bundle="$(mktemp --suffix=.zip)"
+          response="$(mktemp)"
+          (
+            cd "$repo"
+            zip -qr "$bundle" .
+          )
+          status="$(curl --silent --show-error --output "$response" --write-out "%{http_code}" \
+            --request POST \
+            --header "Authorization: Bearer ${CENTRAL_TOKEN}" \
+            --form "bundle=@${bundle}" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=superglue-android&publishingType=AUTOMATIC")"
+          if [[ "$status" != "201" && "$status" != "200" ]]; then
+            echo "Central upload failed with HTTP ${status}."
+            cat "$response"
+            exit 1
+          fi
+          deployment="$(python3 - "$response" <<'PY'
+          import json, sys
+          raw = open(sys.argv[1], encoding="utf-8").read().strip()
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError:
+              print(raw.strip('"'))
+          else:
+              print(data.get("deploymentId") or data.get("id") or "")
+          PY
+          )"
+          if [[ -z "$deployment" ]]; then
+            echo "Central did not return a deployment id."
+            cat "$response"
+            exit 1
+          fi
+          echo "Central deployment ${deployment}"
+          for _ in $(seq 1 40); do
+            sleep 30
+            state_body="$(curl --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer ${CENTRAL_TOKEN}" \
+              "https://central.sonatype.com/api/v1/publisher/status?id=${deployment}")"
+            echo "$state_body"
+            state="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("deploymentState",""))' "$state_body")"
+            if [[ "$state" == "PUBLISHED" ]]; then
+              exit 0
+            fi
+            if [[ "$state" == "FAILED" ]]; then
+              echo "Maven Central rejected the bundle."
+              exit 1
+            fi
+          done
+          echo "Maven Central did not finish within 20 minutes."
+          exit 1

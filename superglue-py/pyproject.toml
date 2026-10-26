@@ -5,12 +5,29 @@ build-backend = "maturin"
 [project]
 name = "superglue-py"
 version = "1.0.0"
-description = "Experimental Python bindings for the superglue Rust core"
+description = "Python bindings for the superglue Rust core"
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
+authors = [
+    { name = "Nick", email = "nick@nyoung.dev" },
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+]
 dependencies = [
     "httpx>=0.27",
 ]
+
+[project.urls]
+Homepage = "https://github.com/pinhole-io/superglue"
+Repository = "https://github.com/pinhole-io/superglue"
+Issues = "https://github.com/pinhole-io/superglue/issues"
 
 [tool.maturin]
 module-name = "superglue._superglue"

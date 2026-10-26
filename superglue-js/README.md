@@ -4,10 +4,18 @@ Node.js bindings for [superglue](../superglue) via [napi-rs](https://napi.rs/). 
 
 **Version:** `package.json` version matches the Rust core and other bindings (`projects/Cargo.toml` workspace). Run `../../scripts/sync-superglue-versions.sh` after bumping the workspace version.
 
+## Install
+
+```bash
+npm install superglue-js
+```
+
+Prebuilt binaries cover Linux x86_64, Linux aarch64, macOS x86_64, and macOS Apple Silicon. On another platform, build from this repository. Each GitHub release also stores the `.node` files.
+
 ## Requirements
 
 - Node.js 18+
-- Rust toolchain (for local builds; published packages ship prebuilt binaries via `@napi-rs/cli`)
+- Rust toolchain when you build from this repository. An npm install uses the prebuilt binary for a supported platform.
 
 ## Build (from this repo)
 
@@ -17,9 +25,9 @@ npm install
 npm run build
 ```
 
-- `npm run build:native` — compile the `.node` addon (debug).
-- `npm run build:native:release` — release build.
-- `npm run build:ts` — compile the optional TypeScript facade (`dist/facade.js`).
+- `npm run build:native` — release `.node` addon.
+- `npm run build:native:debug` — debug addon.
+- `npm run build:ts` — TypeScript facade (`dist/facade.js`).
 
 ## Usage
 
@@ -106,7 +114,9 @@ See [`examples/README.md`](examples/README.md) for a full parity table, run note
 
 ## CI
 
-GitHub Actions workflow: [`../.github/workflows/superglue-js.yml`](../.github/workflows/superglue-js.yml) (Rust `cargo` + `napi build` + TypeScript).
+Test workflow: [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml).
+
+Publish workflow: [`../.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml).
 
 ## Monorepo note
 

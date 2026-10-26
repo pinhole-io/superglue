@@ -3,6 +3,22 @@
   "version": "1.0.0",
   "description": "Node.js bindings for the superglue Rust LLM core (napi-rs)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pinhole-io/superglue.git",
+    "directory": "superglue-js"
+  },
+  "homepage": "https://github.com/pinhole-io/superglue",
+  "bugs": {
+    "url": "https://github.com/pinhole-io/superglue/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {

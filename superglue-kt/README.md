@@ -21,6 +21,22 @@ export ANDROID_NDK_HOME=/path/to/ndk   # e.g. $ANDROID_SDK_ROOT/ndk/28.x
 
 If `ANDROID_NDK_HOME` (or `android.ndkPath` in `local.properties`) is set, `preBuild` runs `buildRustJni` automatically. Without NDK, configure the module in an environment that can compile the shared library, then re-open the project.
 
+## Install
+
+Add the library from Maven Central:
+
+```kotlin
+dependencies {
+    implementation("com.superglue.kt:superglue-android:1.0.0")
+}
+```
+
+The AAR contains `arm64-v8a` and `x86_64`. Each GitHub release also stores `superglue-android-<version>.aar`.
+
+A file dependency does not pull AndroidX or kotlinx. Add those libraries yourself, or include the `:superglue-android` module from this repository. Download the release AAR when you are not using Maven Central.
+
+Publish steps: [PACKAGES.md](../PACKAGES.md).
+
 ## Consuming from Butler
 
 [Butler](/butler) includes `":superglue-android"` via [settings](../butler/settings.gradle.kts) and depends on the module from `:app`. Use `com.superglue.kt` (`version()`, `SuperglueClient`, etc.) and `com.butler.data.ai.SuperglueBridge` for a safe version probe when `.so` is absent on host tests.

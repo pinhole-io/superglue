@@ -35,10 +35,10 @@ Pick the language you call from. Every package shares `[workspace.package].versi
 
 | Language | Where it runs | Package |
 | --- | --- | --- |
-| Rust | Library and CLI | this directory |
-| Python | CPython 3.12 or newer. The dev script expects free-threaded 3.14. | [superglue-py](superglue-py) |
-| JavaScript | Node.js 18 or newer. Current native targets: Linux x86_64, Linux aarch64, macOS x86_64, macOS Apple Silicon. | [superglue-js](superglue-js) |
-| Kotlin | Android JNI (`arm64-v8a`, `x86_64`) | [superglue-kt](superglue-kt) |
+| Rust | Library and CLI | This git repository. There is no crates.io package. |
+| Python | CPython 3.12 or newer | `pip install superglue-py` |
+| JavaScript | Node.js 18 or newer. Linux x86_64, Linux aarch64, macOS x86_64, macOS Apple Silicon. | `npm install superglue-js` |
+| Kotlin | Android JNI (`arm64-v8a`, `x86_64`) | `com.superglue.kt:superglue-android` |
 
 Optional Cargo features stay off until you enable them.
 
@@ -59,21 +59,33 @@ Add the crate from git:
 
 ```toml
 [dependencies]
-superglue = { git = "https://github.com/Bioto/superglue" }
+superglue = { git = "https://github.com/pinhole-io/superglue" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Enable a feature in the same dependency:
+Pin a release with `tag = "v1.0.0"`. Enable a feature in the same dependency:
 
 ```toml
-superglue = { git = "https://github.com/Bioto/superglue", features = ["gateway"] }
+superglue = { git = "https://github.com/pinhole-io/superglue", features = ["gateway"] }
 ```
 
 ### Python
 
-1. Install [uv](https://docs.astral.sh/uv/) and [maturin](https://www.maturin.rs/).
-2. Create a free-threaded 3.14 virtual environment.
-3. Build the wheel.
+Install the package from PyPI. The import name is `superglue`.
+
+```bash
+pip install superglue-py
+```
+
+Wheels cover CPython 3.12, 3.13, and 3.14, including free-threaded 3.14, on Linux x86_64, Linux aarch64, macOS x86_64, and macOS Apple Silicon. The source distribution is on PyPI for other platforms. A Rust toolchain is required to build that source distribution.
+
+Each GitHub release also stores the wheels. Download the wheel for your platform, then install that file:
+
+```bash
+pip install ./superglue_py-*.whl
+```
+
+To build from this repository:
 
 ```bash
 cd superglue-py
@@ -85,7 +97,13 @@ uv venv --python 3.14t
 
 ### JavaScript
 
-Build the napi-rs addon and the TypeScript facade from this repo:
+Install the package from npm:
+
+```bash
+npm install superglue-js
+```
+
+Prebuilt binaries cover Linux x86_64, Linux aarch64, macOS x86_64, and macOS Apple Silicon. On another platform, clone this repository and build the addon:
 
 ```bash
 cd superglue-js
@@ -93,11 +111,31 @@ npm install
 npm run build
 ```
 
+The GitHub release also stores each `.node` file. Point `NAPI_RS_NATIVE_LIBRARY_PATH` at the file for your platform when you load a local checkout of the package.
+
 Tools need an explicit JSON Schema. Prefer `superglue-js/facade` for client options, tools, and guardrails. Details: [superglue-js/README.md](superglue-js/README.md).
 
 ### Kotlin
 
-Build the JNI library with the Android NDK and `cargo-ndk`. Steps: [superglue-kt/README.md](superglue-kt/README.md).
+Add the Android library from Maven Central:
+
+```kotlin
+dependencies {
+    implementation("com.superglue.kt:superglue-android:1.0.0")
+}
+```
+
+The AAR contains `arm64-v8a` and `x86_64`. Each GitHub release also stores `superglue-android-1.0.0.aar`.
+
+A file dependency does not pull AndroidX or kotlinx. Add those libraries yourself, or include the `:superglue-android` module from this repository.
+
+```kotlin
+dependencies {
+    implementation(files("libs/superglue-android-1.0.0.aar"))
+}
+```
+
+Build steps: [superglue-kt/README.md](superglue-kt/README.md).
 
 ## Quick start
 
@@ -309,6 +347,7 @@ Design notes live in this repo. Start at [_docs/README.md](_docs/README.md).
 | See what is planned | [Roadmap](_docs/09-roadmap-and-phasing.md) |
 | Run a numbered example | [Examples](examples/README.md) |
 | Bump the shared version | [PACKAGES.md](PACKAGES.md) |
+| Publish PyPI, npm, and Maven | [PACKAGES.md](PACKAGES.md) |
 
 ## Examples
 
@@ -374,6 +413,8 @@ After you change `[workspace.package].version`:
 ./scripts/sync-superglue-versions.sh
 ./scripts/check-superglue-version-parity.sh
 ```
+
+Publish that version with a GitHub Release tagged `v` plus the workspace version. Steps and secrets: [PACKAGES.md](PACKAGES.md).
 
 In [thestack](https://github.com/Bioto/thestack), this repository is the `projects/superglue` submodule. Layout notes: [MONOREPO.md](MONOREPO.md).
 

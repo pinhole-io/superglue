@@ -22,24 +22,41 @@ echo "Syncing superglue version: $VERSION"
 echo "$VERSION" > "$ROOT/VERSION"
 
 JS_PKG="$ROOT/superglue-js/package.json"
+JS_INDEX="$ROOT/superglue-js/index.js"
 if [[ -f "$JS_PKG" ]]; then
   if command -v node >/dev/null 2>&1; then
     node -e "
       const fs = require('fs');
       const p = process.argv[1];
-      const v = process.argv[2];
+      const indexPath = process.argv[2];
+      const v = process.argv[3];
       const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const prev = j.version;
       j.version = v;
       fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
-    " "$JS_PKG" "$VERSION"
+      if (prev && prev !== v && fs.existsSync(indexPath)) {
+        const src = fs.readFileSync(indexPath, 'utf8');
+        fs.writeFileSync(indexPath, src.split(prev).join(v));
+      }
+    " "$JS_PKG" "$JS_INDEX" "$VERSION"
     echo "  updated $JS_PKG"
   else
     echo "  skip $JS_PKG (node not found)"
   fi
 fi
 
+PYPROJECT="$ROOT/superglue-py/pyproject.toml"
+if [[ -f "$PYPROJECT" ]]; then
+  sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" "$PYPROJECT"
+  echo "  updated $PYPROJECT"
+fi
+
 KT_GRADLE="$ROOT/superglue-kt/superglue-android/build.gradle.kts"
 if [[ -f "$KT_GRADLE" ]]; then
+  if grep -q '^version = ' "$KT_GRADLE"; then
+    sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" "$KT_GRADLE"
+    echo "  updated version in build.gradle.kts"
+  fi
   if grep -q 'superglueLibraryVersion' "$KT_GRADLE"; then
     sed -i "s/superglueLibraryVersion = \"[^\"]*\"/superglueLibraryVersion = \"$VERSION\"/" "$KT_GRADLE"
     echo "  updated superglueLibraryVersion in build.gradle.kts"

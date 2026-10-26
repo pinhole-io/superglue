@@ -30,6 +30,8 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("maven-publish")
+    id("signing")
 }
 
 group = "com.superglue.kt"
@@ -93,6 +95,12 @@ android {
                     }
                 }
             }
+        }
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
         }
     }
 }
@@ -286,5 +294,70 @@ afterEvaluate {
         }
     } else if (!skipNativeBuild) {
         testTask?.dependsOn(buildRustJniHost)
+    }
+}
+
+// Maven Central requires a javadoc jar. The sources jar holds the API.
+val centralJavadocJar = tasks.register<org.gradle.api.tasks.bundling.Jar>("centralJavadocJar") {
+    group = "publishing"
+    description = "Javadoc stub for Maven Central. Read the sources jar for the API."
+    archiveClassifier.set("javadoc")
+    val stubDir = layout.buildDirectory.dir("javadoc-stub")
+    doFirst {
+        val dir = stubDir.get().asFile
+        dir.mkdirs()
+        dir.resolve("README.txt").writeText(
+            "Kotlin and Java sources are in the sources jar.\n",
+        )
+    }
+    from(stubDir)
+}
+
+publishing {
+    repositories {
+        maven {
+            name = "local"
+            url = uri(layout.buildDirectory.dir("repo"))
+        }
+    }
+}
+
+afterEvaluate {
+    publishing.publications.create<org.gradle.api.publish.maven.MavenPublication>("release") {
+        from(components["release"])
+        groupId = "com.superglue.kt"
+        artifactId = "superglue-android"
+        version = project.version.toString()
+        artifact(centralJavadocJar)
+        pom {
+            name.set("superglue-android")
+            description.set("Android JNI bindings for the superglue Rust core")
+            url.set("https://github.com/pinhole-io/superglue")
+            licenses {
+                license {
+                    name.set("MIT")
+                    url.set("https://opensource.org/licenses/MIT")
+                }
+            }
+            developers {
+                developer {
+                    name.set("Nick")
+                    email.set("nick@nyoung.dev")
+                }
+            }
+            scm {
+                connection.set("scm:git:https://github.com/pinhole-io/superglue.git")
+                developerConnection.set("scm:git:ssh://git@github.com/pinhole-io/superglue.git")
+                url.set("https://github.com/pinhole-io/superglue")
+            }
+        }
+    }
+
+    val signingKey = System.getenv("GPG_PRIVATE_KEY")
+    if (!signingKey.isNullOrBlank()) {
+        signing {
+            useInMemoryPgpKeys(signingKey, System.getenv("GPG_PASSPHRASE").orEmpty())
+            sign(publishing.publications.getByName("release"))
+        }
     }
 }
