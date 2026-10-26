@@ -32,6 +32,12 @@ impl Conversation {
         self.messages.push(ChatMessage::text("user", text.into()));
     }
 
+    /// Push a user message that may contain file and image parts.
+    pub fn push_user_message(&mut self, mut message: ChatMessage) {
+        message.role = "user".to_string();
+        self.messages.push(message);
+    }
+
     pub fn push_assistant_text(&mut self, text: impl Into<String>) {
         self.messages
             .push(ChatMessage::text("assistant", text.into()));
@@ -58,5 +64,32 @@ impl Conversation {
         .await?;
         self.messages = outcome.messages.clone();
         Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openai::{ContentPart, MessageContent};
+
+    #[test]
+    fn push_user_message_keeps_the_parts() {
+        let mut conversation = Conversation::new();
+        let mut message = ChatMessage::default();
+        message.role = "assistant".to_string();
+        message.content = Some(MessageContent::Parts(vec![ContentPart::Text {
+            text: "See note.pdf.".to_string(),
+        }]));
+        conversation.push_user_message(message);
+        assert_eq!(conversation.messages.len(), 1);
+        assert_eq!(conversation.messages[0].role, "user");
+        match &conversation.messages[0].content {
+            Some(MessageContent::Parts(parts)) => {
+                assert!(
+                    matches!(parts.first(), Some(ContentPart::Text { text }) if text == "See note.pdf.")
+                );
+            }
+            _ => panic!("the parts stay on the message"),
+        }
     }
 }

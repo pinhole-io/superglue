@@ -959,6 +959,11 @@ impl ClientConversation {
         self.conversation.push_user(text);
     }
 
+    /// Push a user message that may contain file and image parts.
+    pub fn push_user_message(&mut self, message: ChatMessage) {
+        self.conversation.push_user_message(message);
+    }
+
     pub async fn complete(&mut self, call: CallOptions) -> Result<CompletionOutcome, ChatError> {
         let http = effective_http(&self.inner.http, call.timeout, call.connect_timeout)?;
         let options = finalize_call_options(&self.inner.options, &call);

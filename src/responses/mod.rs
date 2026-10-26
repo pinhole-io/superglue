@@ -3317,6 +3317,40 @@ mod tests {
     }
 
     #[test]
+    fn chat_messages_to_response_input_maps_user_pdf_parts() {
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: Some(MessageContent::Parts(vec![
+                ContentPart::Text {
+                    text: "summarize".into(),
+                },
+                ContentPart::File {
+                    file: crate::openai::FileContent {
+                        file_data: Some("data:application/pdf;base64,QQ==".into()),
+                        file_id: None,
+                        filename: Some("note.pdf".into()),
+                    },
+                },
+            ])),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
+        }];
+        let ResponseInput::Items(items) = chat_messages_to_response_input(&messages) else {
+            panic!("expected items");
+        };
+        let ResponseInputItem::Message { content, .. } = &items[0] else {
+            panic!("expected message");
+        };
+        let arr = content.as_array().expect("multipart content");
+        assert_eq!(arr[1]["type"], "input_file");
+        assert_eq!(arr[1]["filename"], "note.pdf");
+        assert_eq!(arr[1]["file_data"], "data:application/pdf;base64,QQ==");
+    }
+
+    #[test]
     fn chat_messages_to_response_input_drops_orphan_tool_results() {
         let messages = vec![
             ChatMessage {
