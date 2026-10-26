@@ -15,7 +15,7 @@ export const SYSTEM2_PROVIDERS = [
 
 export type System2Provider = (typeof SYSTEM2_PROVIDERS)[number]
 
-/** OpenAI-compatible providers that support embeddings. */
+/** Providers that support embeddings. Bedrock uses InvokeModel. */
 export const EMBEDDING_PROVIDERS = [
   'openai',
   'xai',
@@ -23,6 +23,7 @@ export const EMBEDDING_PROVIDERS = [
   'openrouter',
   'runinfra',
   'vercel',
+  'bedrock',
 ] as const
 
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number]
@@ -113,7 +114,7 @@ export function providerTooltip(providerId: string): string {
     case 'anthropic':
       return 'System 2 chat and Responses. Does not support embeddings.'
     case 'bedrock':
-      return 'System 2 chat and Responses on the Bedrock OpenAI endpoint. No embeddings and no model list. Auth is AWS_BEARER_TOKEN_BEDROCK.'
+      return 'System 2 chat and Responses on the Bedrock OpenAI endpoint. Text embeddings use InvokeModel. The catalog lists foundation models and inference profiles. Auth is AWS_BEARER_TOKEN_BEDROCK.'
     case 'openai':
     case 'groq':
       return 'System 2 chat and Responses. Also supports POST /v1/audio/transcriptions.'

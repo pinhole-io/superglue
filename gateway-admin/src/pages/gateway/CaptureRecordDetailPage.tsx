@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
+import { errorText } from '@/lib/utils'
 
 function JsonBlock({ title, value }: { title: string; value: unknown }) {
   const [open, setOpen] = useState(true)
@@ -53,7 +54,7 @@ export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: stri
     if (!requestId) return
     setError(null)
     setDetail(null)
-    api.captureRecord(requestId).then(setDetail).catch((e) => setError(String(e)))
+    api.captureRecord(requestId).then(setDetail).catch((e) => setError(errorText(e)))
   }, [requestId])
 
   if (!requestId) {

@@ -126,6 +126,79 @@ async fn empty_input_is_rejected_before_http() {
     assert!(matches!(error, EmbedError::EmptyInput));
 }
 
+#[tokio::test]
+async fn bedrock_titan_invoke_returns_a_vector() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.titan-embed-text-v2%3A0/invoke"))
+        .and(body_json(json!({
+            "inputText": "hello",
+            "dimensions": 3
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "embedding": [0.1, 0.2, 0.3],
+            "inputTextTokenCount": 2
+        })))
+        .mount(&server)
+        .await;
+
+    let http = HttpClient::new(ClientConfig::default()).expect("http client");
+    let mut credentials = ProviderCredentials::new();
+    credentials.insert_key(ProviderId::Bedrock, "bedrock-test");
+    credentials.insert_base_url(ProviderId::Bedrock, format!("{}/openai", server.uri()));
+    let outcome = embed(
+        &http,
+        &credentials,
+        EmbeddingRequest {
+            model: "bedrock:embedding:amazon.titan-embed-text-v2:0".into(),
+            input: EmbeddingInput::Text("hello".into()),
+            dimensions: Some(3),
+        },
+    )
+    .await
+    .expect("titan embedding");
+
+    assert_eq!(outcome.model, "amazon.titan-embed-text-v2:0");
+    assert_eq!(outcome.embeddings[0].vector, vec![0.1, 0.2, 0.3]);
+    assert_eq!(outcome.usage.expect("token count").prompt_tokens, 2);
+}
+
+#[tokio::test]
+async fn bedrock_cohere_invoke_returns_a_batch() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/cohere.embed-english-v3/invoke"))
+        .and(body_json(json!({
+            "texts": ["one", "two"],
+            "input_type": "search_document"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "embeddings": {"float": [[0.1], [0.2]]}
+        })))
+        .mount(&server)
+        .await;
+
+    let http = HttpClient::new(ClientConfig::default()).expect("http client");
+    let mut credentials = ProviderCredentials::new();
+    credentials.insert_key(ProviderId::Bedrock, "bedrock-test");
+    credentials.insert_base_url(ProviderId::Bedrock, format!("{}/openai", server.uri()));
+    let outcome = embed(
+        &http,
+        &credentials,
+        EmbeddingRequest {
+            model: "bedrock:cohere.embed-english-v3".into(),
+            input: EmbeddingInput::Texts(vec!["one".into(), "two".into()]),
+            dimensions: None,
+        },
+    )
+    .await
+    .expect("cohere embeddings");
+
+    assert_eq!(outcome.embeddings.len(), 2);
+    assert_eq!(outcome.embeddings[1].vector, vec![0.2]);
+    assert!(outcome.usage.is_none());
+}
+
 fn test_client(server: &MockServer) -> (HttpClient, ProviderCredentials) {
     let http = HttpClient::new(ClientConfig::default()).expect("http client");
     let mut credentials = ProviderCredentials::new();

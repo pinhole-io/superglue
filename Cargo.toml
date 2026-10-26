@@ -35,7 +35,7 @@ prometheus = ["dep:metrics-exporter-prometheus"]
 otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 mcp = ["dep:rmcp", "dep:http", "dep:chrono"]
 # Enables the axum HTTP LLM gateway server in `src/gateway/`.
-gateway = ["dep:axum", "dep:tower", "dep:tower-http", "dep:rusqlite", "dep:chrono", "dep:subtle", "dep:tokio-stream", "dep:rust-embed"]
+gateway = ["dep:axum", "dep:tower", "dep:tower-http", "dep:rusqlite", "dep:chrono", "dep:subtle", "dep:tokio-stream", "dep:rust-embed", "dep:chacha20poly1305"]
 # Enables optional LLM traffic capture (gzip spool + S3 upload) on the gateway.
 capture = ["gateway", "dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-async", "dep:flate2"]
 # Enables the programmatic JavaScript tool mode.
@@ -88,6 +88,7 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 rmcp = { version = "2.2", optional = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 http = { version = "1", optional = true }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock", "std"] }
+chacha20poly1305 = { version = "0.10", optional = true }
 base64 = "0.22"
 sha2 = "0.11"
 axum = { version = "0.8", optional = true, features = ["multipart"] }

@@ -100,10 +100,24 @@ impl HttpClient {
     ///
     /// Returns `Error::Reqwest` if the underlying `reqwest::Client` fails to construct.
     pub fn new(config: ClientConfig) -> Result<Self, Error> {
+        Self::build(config, true)
+    }
+
+    /// Build a client that does not follow redirects.
+    ///
+    /// Proxy upstreams use this so a `302` cannot move a stored bearer token.
+    pub fn new_without_redirects(config: ClientConfig) -> Result<Self, Error> {
+        Self::build(config, false)
+    }
+
+    fn build(config: ClientConfig, follow_redirects: bool) -> Result<Self, Error> {
         let mut builder = Client::builder()
             .connect_timeout(config.connect_timeout)
             .user_agent(config.user_agent.clone())
             .pool_max_idle_per_host(config.pool_max_idle_per_host);
+        if !follow_redirects {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
         if let Some(idle_timeout) = config.pool_idle_timeout {
             builder = builder.pool_idle_timeout(idle_timeout);
         }

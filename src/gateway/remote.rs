@@ -6,7 +6,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::gateway::db::{ApiKeyListItem, BudgetRecord, ProfileRecord, UsageRecord, UserRecord};
+use crate::gateway::db::{
+    ApiKeyListItem, BudgetRecord, ProfileRecord, ProxyProviderRecord, UsageRecord, UserRecord,
+};
 use crate::gateway::error::{GatewayError, GatewayResult};
 
 /// Admin API client for a running gateway server.
@@ -545,6 +547,93 @@ impl RemoteClient {
             .map_err(|e| GatewayError::Internal(format!("request failed: {e}")))?;
         let parsed: ModelsResponse = parse_json(resp).await?;
         Ok(parsed.data)
+    }
+
+    pub async fn create_proxy_provider(
+        &self,
+        slug: &str,
+        label: Option<&str>,
+        base_url: &str,
+        api_key: Option<&str>,
+        enabled: bool,
+    ) -> GatewayResult<ProxyProviderRecord> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            slug: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            label: Option<&'a str>,
+            base_url: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            api_key: Option<&'a str>,
+            enabled: bool,
+        }
+        self.post_json(
+            "/v1/proxy-providers",
+            &Body {
+                slug,
+                label,
+                base_url,
+                api_key,
+                enabled,
+            },
+        )
+        .await
+    }
+
+    pub async fn list_proxy_providers(&self) -> GatewayResult<Vec<ProxyProviderRecord>> {
+        #[derive(Deserialize)]
+        struct Response {
+            providers: Vec<ProxyProviderRecord>,
+        }
+        let parsed: Response = self.get_json("/v1/proxy-providers").await?;
+        Ok(parsed.providers)
+    }
+
+    pub async fn update_proxy_provider(
+        &self,
+        slug: &str,
+        label: Option<&str>,
+        base_url: Option<&str>,
+        api_key: Option<&str>,
+        enabled: Option<bool>,
+    ) -> GatewayResult<ProxyProviderRecord> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            label: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            base_url: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            api_key: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            enabled: Option<bool>,
+        }
+        self.patch_json(
+            &format!("/v1/proxy-providers/{slug}"),
+            &Body {
+                label,
+                base_url,
+                api_key,
+                enabled,
+            },
+        )
+        .await
+    }
+
+    pub async fn delete_proxy_provider(&self, slug: &str) -> GatewayResult<String> {
+        #[derive(Deserialize)]
+        struct Deleted {
+            deleted: String,
+        }
+        let resp = self
+            .http
+            .delete(format!("{}/v1/proxy-providers/{slug}", self.base_url))
+            .header("X-Superglue-Key", self.auth_header())
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("request failed: {e}")))?;
+        let parsed: Deleted = parse_json(resp).await?;
+        Ok(parsed.deleted)
     }
 }
 

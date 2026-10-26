@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, clearMasterKey, getMasterKey, setMasterKey } from './api'
+import { startModelCatalog } from './modelCatalog'
 import { AppShell } from './components/AppShell'
 import { GatewayBudgetsPage } from './pages/gateway/BudgetsPage'
 import { GatewayCapturePage } from './pages/gateway/CapturePage'
@@ -19,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { errorText } from '@/lib/utils'
 import './style.css'
 
 type BootState = 'loading' | 'ready' | 'setup'
@@ -146,6 +148,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [boot, setBoot] = useState<BootState>('loading')
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => startModelCatalog(), [])
+
   useEffect(() => {
     let cancelled = false
     setBoot('loading')
@@ -155,7 +159,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
       })
       .catch((cause) => {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : String(cause))
+          setError(errorText(cause))
           setBoot('ready')
         }
       })

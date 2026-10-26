@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api } from '../api'
+import { catalogStatus, refreshModelCatalog, useModelCatalog } from '../modelCatalog'
 import {
   DEFAULT_SYSTEM2_MODELS,
   EMBEDDING_PROVIDERS,
@@ -87,15 +87,16 @@ export function ModelPicker({
   hideDefaultOption?: boolean
   onChange: (models: string[], useDefault: boolean) => void
 }) {
-  const [catalog, setCatalog] = useState<string[]>([])
+  const catalogState = useModelCatalog()
+  const catalog = catalogState.ids
+  const catalogReady = catalogState.refreshedAt !== null || catalog.length > 0 || catalogState.error !== null
+  const [now, setNow] = useState(() => Date.now())
   const [searchByProvider, setSearchByProvider] = useState<Record<string, string>>({})
   const [embeddingDraft, setEmbeddingDraft] = useState({ provider: 'openai' as EmbeddingProvider, model: '' })
 
   useEffect(() => {
-    api
-      .models()
-      .then((result) => setCatalog(result.data.map((model) => model.id)))
-      .catch(() => setCatalog([]))
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
   }, [])
 
   const effective = useDefault && !hideDefaultOption ? [...DEFAULT_SYSTEM2_MODELS] : selected
@@ -134,6 +135,20 @@ export function ModelPicker({
 
   return (
     <div className="model-picker">
+      <div className="model-catalog-bar">
+        <p className={catalogState.error ? 'error' : 'muted'}>{catalogStatus(catalogState, now)}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={catalogState.refreshing}
+          onClick={() => {
+            void refreshModelCatalog()
+          }}
+        >
+          {catalogState.refreshing ? 'Refreshing…' : 'Refresh models'}
+        </Button>
+      </div>
       {!hideDefaultOption && (
         <label className="check-row">
           <Checkbox
@@ -156,7 +171,9 @@ export function ModelPicker({
               tip={FAMILY_DESCRIPTION.system1}
               description="TypeSafe evaluation models."
             />
-            {system1Catalog.length === 0 && !effective.some((id) => classifyModel(id) === 'system1') ? (
+            {!catalogReady ? (
+              <p className="muted">Loading models…</p>
+            ) : system1Catalog.length === 0 && !effective.some((id) => classifyModel(id) === 'system1') ? (
               <p className="muted">No TypeSafe models in the catalog. Configure TYPESAFE_API_KEY on the gateway.</p>
             ) : (
               <div className="model-grid">

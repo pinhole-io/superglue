@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { errorText } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -50,7 +51,7 @@ export function GatewayUsagePage() {
         setSummary(s)
         setByModel(m)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
   }
 
   useEffect(() => {
@@ -59,7 +60,7 @@ export function GatewayUsagePage() {
         setUsers(u.users)
         setKeys(k.keys)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
     load()
   }, [])
 
@@ -83,7 +84,7 @@ export function GatewayUsagePage() {
       setNotice(`Deleted ${result.deleted} zero-cost usage row(s).`)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
       setConfirmZero(false)
     }
   }

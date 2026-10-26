@@ -878,7 +878,7 @@ impl Client {
         crate::systemone::system_one(&self.inner.http, &credentials, request).await
     }
 
-    /// Generate one vector with an OpenAI-compatible embedding model.
+    /// Generate one vector with an embedding model.
     pub async fn embed(
         &self,
         model: impl Into<String>,

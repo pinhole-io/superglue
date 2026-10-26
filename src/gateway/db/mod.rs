@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::gateway::auth::hash_key;
 use crate::gateway::error::{GatewayError, GatewayResult};
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 const MAX_PROFILE_MODELS: usize = 64;
 
 const MIGRATION_V1: &str = "
@@ -95,6 +95,20 @@ CREATE TABLE IF NOT EXISTS profile_models (
 );
 
 ALTER TABLE users ADD COLUMN profile_id TEXT REFERENCES profiles(id);
+";
+
+const MIGRATION_V4: &str = "
+CREATE TABLE IF NOT EXISTS proxy_providers (
+    slug TEXT PRIMARY KEY NOT NULL,
+    label TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key_nonce BLOB,
+    api_key_ciphertext BLOB,
+    key_suffix TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 ";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +200,58 @@ pub struct ProfileRecord {
     pub allowed_models: Vec<String>,
     pub user_count: u32,
     pub created_at: String,
+}
+
+/// Public proxy provider row. The upstream API key is never included.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyProviderRecord {
+    pub slug: String,
+    pub label: String,
+    pub base_url: String,
+    pub key_suffix: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Stored proxy provider, including the sealed upstream API key.
+#[derive(Debug, Clone)]
+pub struct ProxyProviderStored {
+    pub slug: String,
+    pub label: String,
+    pub base_url: String,
+    pub api_key_nonce: Option<Vec<u8>>,
+    pub api_key_ciphertext: Option<Vec<u8>>,
+    pub key_suffix: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl ProxyProviderStored {
+    #[must_use]
+    pub fn public_record(&self) -> ProxyProviderRecord {
+        ProxyProviderRecord {
+            slug: self.slug.clone(),
+            label: self.label.clone(),
+            base_url: self.base_url.clone(),
+            key_suffix: self.key_suffix.clone(),
+            enabled: self.enabled,
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
+        }
+    }
+}
+
+/// Values written when a proxy provider is created.
+pub struct NewProxyProvider {
+    pub slug: String,
+    pub label: String,
+    pub base_url: String,
+    pub api_key_nonce: Option<Vec<u8>>,
+    pub api_key_ciphertext: Option<Vec<u8>>,
+    pub key_suffix: Option<String>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1291,6 +1357,141 @@ impl Database {
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    pub fn insert_proxy_provider(
+        &self,
+        row: NewProxyProvider,
+    ) -> GatewayResult<ProxyProviderRecord> {
+        let slug = row.slug.clone();
+        if self.get_proxy_provider_secret(&slug)?.is_some() {
+            return Err(GatewayError::bad_request(format!(
+                "proxy provider '{slug}' already exists"
+            )));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO proxy_providers (
+                slug, label, base_url, api_key_nonce, api_key_ciphertext, key_suffix, enabled, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                row.slug,
+                row.label,
+                row.base_url,
+                row.api_key_nonce,
+                row.api_key_ciphertext,
+                row.key_suffix,
+                i32::from(row.enabled),
+                now,
+                now,
+            ],
+        )?;
+        drop(conn);
+        self.get_proxy_provider(&slug)?
+            .ok_or_else(|| GatewayError::Internal("proxy provider missing after create".into()))
+    }
+
+    pub fn get_proxy_provider(&self, slug: &str) -> GatewayResult<Option<ProxyProviderRecord>> {
+        Ok(self
+            .get_proxy_provider_secret(slug)?
+            .map(|row| row.public_record()))
+    }
+
+    pub fn get_proxy_provider_secret(
+        &self,
+        slug: &str,
+    ) -> GatewayResult<Option<ProxyProviderStored>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT slug, label, base_url, api_key_nonce, api_key_ciphertext, key_suffix, enabled, created_at, updated_at
+             FROM proxy_providers WHERE slug = ?1",
+            params![slug],
+            map_proxy_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn list_proxy_providers(&self) -> GatewayResult<Vec<ProxyProviderRecord>> {
+        Ok(self
+            .list_proxy_provider_secrets()?
+            .into_iter()
+            .map(|row| row.public_record())
+            .collect())
+    }
+
+    pub fn list_proxy_provider_secrets(&self) -> GatewayResult<Vec<ProxyProviderStored>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT slug, label, base_url, api_key_nonce, api_key_ciphertext, key_suffix, enabled, created_at, updated_at
+             FROM proxy_providers ORDER BY slug",
+        )?;
+        let rows = stmt.query_map([], map_proxy_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn update_proxy_provider_row(
+        &self,
+        row: &ProxyProviderStored,
+    ) -> GatewayResult<ProxyProviderRecord> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.lock()?;
+        let changed = conn.execute(
+            "UPDATE proxy_providers SET
+                label = ?2,
+                base_url = ?3,
+                api_key_nonce = ?4,
+                api_key_ciphertext = ?5,
+                key_suffix = ?6,
+                enabled = ?7,
+                updated_at = ?8
+             WHERE slug = ?1",
+            params![
+                row.slug,
+                row.label,
+                row.base_url,
+                row.api_key_nonce,
+                row.api_key_ciphertext,
+                row.key_suffix,
+                i32::from(row.enabled),
+                now,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(GatewayError::not_found(format!(
+                "proxy provider '{}' not found",
+                row.slug
+            )));
+        }
+        drop(conn);
+        self.get_proxy_provider(&row.slug)?
+            .ok_or_else(|| GatewayError::Internal("proxy provider missing after update".into()))
+    }
+
+    pub fn delete_proxy_provider(&self, slug: &str) -> GatewayResult<()> {
+        let conn = self.lock()?;
+        let changed = conn.execute("DELETE FROM proxy_providers WHERE slug = ?1", params![slug])?;
+        if changed == 0 {
+            return Err(GatewayError::not_found(format!(
+                "proxy provider '{slug}' not found"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn map_proxy_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProxyProviderStored> {
+    Ok(ProxyProviderStored {
+        slug: row.get(0)?,
+        label: row.get(1)?,
+        base_url: row.get(2)?,
+        api_key_nonce: row.get(3)?,
+        api_key_ciphertext: row.get(4)?,
+        key_suffix: row.get(5)?,
+        enabled: row.get::<_, i32>(6)? != 0,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
 }
 
 fn run_migrations(conn: &Connection) -> GatewayResult<()> {
@@ -1307,6 +1508,11 @@ fn run_migrations(conn: &Connection) -> GatewayResult<()> {
     }
     if version < 3 {
         conn.execute_batch(MIGRATION_V3)?;
+        version = 3;
+        conn.pragma_update(None, "user_version", version)?;
+    }
+    if version < 4 {
+        conn.execute_batch(MIGRATION_V4)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())

@@ -508,13 +508,43 @@ pub async fn list_budget_resets(
 pub struct ProviderStatus {
     pub id: String,
     pub label: String,
+    /// `builtin` or `proxy`.
+    pub kind: String,
     pub configured: bool,
     pub base_url: String,
     pub key_suffix: Option<String>,
     pub catalog_ok: bool,
     pub model_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+pub async fn refresh_models(
+    State(state): State<Arc<GatewayState>>,
+    Auth(auth): Auth,
+) -> GatewayResult<impl axum::response::IntoResponse> {
+    crate::gateway::refresh_catalog(&state).await;
+    let master = state.config.master_key_exposed().to_string();
+    let proxies = state
+        .db
+        .run_blocking(move |db| crate::gateway::proxy_provider::enabled_list_targets(db, &master))
+        .await?;
+    let data = crate::gateway::model_catalog::list_gateway_models(
+        &state.http,
+        &state.proxy_http,
+        &state.credentials,
+        &auth,
+        Some(&state.catalog),
+        &proxies,
+    )
+    .await?;
+    Ok(json_ok(serde_json::json!({
+        "object": "list",
+        "data": data,
+        "refreshed_at": state.catalog.refreshed_at_ms(),
+    })))
 }
 
 pub async fn list_providers(
@@ -540,6 +570,7 @@ pub async fn list_providers(
                 &http,
                 &credentials,
                 provider,
+                &state.catalog,
             )
             .await
             {
@@ -552,13 +583,73 @@ pub async fn list_providers(
         providers.push(ProviderStatus {
             id: provider.as_str().to_string(),
             label: provider.display_name().to_string(),
+            kind: "builtin".into(),
             configured,
             base_url,
             key_suffix,
             catalog_ok,
             model_count,
+            enabled: None,
+            error,
+        });
+    }
+    let proxies = state
+        .db
+        .run_blocking(|db| db.list_proxy_provider_secrets())
+        .await?;
+    for row in proxies {
+        let (catalog_ok, model_count, error) = if row.enabled {
+            let master = state.config.master_key_exposed().to_string();
+            let slug = row.slug.clone();
+            match proxy_status_count(&state, &row, &master).await {
+                Ok(count) => (true, count, None),
+                Err(err) => {
+                    tracing::warn!(slug = %slug, error = %err, "proxy catalog status failed");
+                    (false, 0, Some(err.to_string()))
+                }
+            }
+        } else {
+            (false, 0, None)
+        };
+        providers.push(ProviderStatus {
+            id: row.slug.clone(),
+            label: row.label.clone(),
+            kind: "proxy".into(),
+            configured: true,
+            base_url: row.base_url.clone(),
+            key_suffix: row.key_suffix.clone(),
+            catalog_ok,
+            model_count,
+            enabled: Some(row.enabled),
             error,
         });
     }
     Ok(json_ok(serde_json::json!({ "providers": providers })))
+}
+
+async fn proxy_status_count(
+    state: &crate::gateway::GatewayState,
+    row: &crate::gateway::db::ProxyProviderStored,
+    master_key: &str,
+) -> GatewayResult<u32> {
+    let target = crate::gateway::proxy_provider::ProxyListTarget {
+        slug: row.slug.clone(),
+        base_url: row.base_url.clone(),
+        api_key: match (&row.api_key_nonce, &row.api_key_ciphertext) {
+            (Some(nonce), Some(ciphertext)) => Some(crate::gateway::proxy_secret::open_api_key(
+                master_key, nonce, ciphertext,
+            )?),
+            (None, None) => None,
+            _ => {
+                return Err(GatewayError::Internal(
+                    "proxy API key ciphertext is incomplete".into(),
+                ));
+            }
+        },
+    };
+    let models = state
+        .catalog
+        .proxy_models(&state.proxy_http, &target)
+        .await?;
+    Ok(u32::try_from(models.len()).unwrap_or(u32::MAX))
 }

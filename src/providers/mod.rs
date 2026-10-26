@@ -3,6 +3,7 @@
 mod adapter;
 mod anthropic;
 pub mod anthropic_stream;
+pub(crate) mod bedrock;
 mod credentials;
 mod model_ref;
 mod openai_compat;

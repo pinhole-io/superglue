@@ -8,6 +8,7 @@ import type { CaptureStatus, GatewayUser } from '../../types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { errorText } from '@/lib/utils'
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -27,7 +28,7 @@ export function GatewayCapturePage() {
         setStatus(s)
         setUsers(u.users)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
   }
 
   useEffect(() => { load() }, [])

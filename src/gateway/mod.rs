@@ -4,6 +4,7 @@ mod auth;
 mod budget;
 #[cfg(feature = "capture")]
 pub mod capture;
+mod catalog_cache;
 pub mod cli;
 mod config;
 mod db;
@@ -11,6 +12,8 @@ mod error;
 mod model_access;
 mod model_catalog;
 mod proxy;
+mod proxy_provider;
+mod proxy_secret;
 pub mod remote;
 mod routes;
 
@@ -26,6 +29,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::gateway::auth::{AuthCache, hash_key};
+use crate::gateway::catalog_cache::ModelCatalogCache;
 use crate::gateway::db::Database;
 use crate::http::{ClientConfig, HttpClient};
 use crate::providers::ProviderCredentials;
@@ -38,7 +42,10 @@ pub struct GatewayState {
     pub config: GatewayConfig,
     pub db: Database,
     pub http: Arc<HttpClient>,
+    /// Upstream client for proxy providers. Redirects are disabled.
+    pub proxy_http: Arc<HttpClient>,
     pub credentials: Arc<ProviderCredentials>,
+    pub catalog: ModelCatalogCache,
     pub master_key_hash: [u8; 32],
     pub(crate) auth_cache: AuthCache,
     #[cfg(feature = "capture")]
@@ -67,12 +74,18 @@ impl GatewayState {
             HttpClient::new(ClientConfig::for_llm())
                 .map_err(|e| GatewayError::Internal(e.to_string()))?,
         );
+        let proxy_http = Arc::new(
+            HttpClient::new_without_redirects(ClientConfig::for_llm())
+                .map_err(|e| GatewayError::Internal(e.to_string()))?,
+        );
         let master_key_hash = hash_key(config.master_key_exposed());
         Ok(Self {
             config,
             db,
             http,
+            proxy_http,
             credentials: Arc::new(credentials),
+            catalog: ModelCatalogCache::new(),
             master_key_hash,
             auth_cache: AuthCache::new(),
             #[cfg(feature = "capture")]
@@ -100,6 +113,7 @@ pub async fn serve(config: GatewayConfig) -> Result<(), GatewayError> {
         state
     };
     let state = Arc::new(state);
+    spawn_catalog_refresh(state.clone());
     let addr: SocketAddr = state
         .config
         .listen_addr
@@ -116,6 +130,38 @@ pub async fn serve(config: GatewayConfig) -> Result<(), GatewayError> {
         .await
         .map_err(|e| GatewayError::Internal(format!("server error: {e}")))?;
     Ok(())
+}
+
+fn spawn_catalog_refresh(state: Arc<GatewayState>) {
+    tokio::spawn(async move {
+        loop {
+            refresh_catalog(&state).await;
+            tokio::time::sleep(catalog_cache::REFRESH_INTERVAL).await;
+        }
+    });
+}
+
+pub(crate) async fn refresh_catalog(state: &GatewayState) {
+    state
+        .catalog
+        .refresh_all(&state.http, &state.credentials)
+        .await;
+    let db = state.db.clone();
+    let master = state.config.master_key_exposed().to_string();
+    match db
+        .run_blocking(move |db| proxy_provider::enabled_list_targets(db, &master))
+        .await
+    {
+        Ok(targets) => {
+            state
+                .catalog
+                .refresh_proxies(&state.proxy_http, &targets)
+                .await;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to load proxy providers for catalog refresh")
+        }
+    }
 }
 
 /// Build test gateway state with a temporary database (integration tests).

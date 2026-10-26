@@ -20,25 +20,7 @@ pub async fn create_response(
 ) -> Result<Response, GatewayError> {
     let stream = body.stream.unwrap_or(false);
     if stream {
-        #[cfg(not(feature = "capture"))]
-        let byte_stream = proxy::proxy_response_stream(
-            &state.http,
-            &state.credentials,
-            state.db.clone(),
-            auth,
-            body,
-        )
-        .await?;
-        #[cfg(feature = "capture")]
-        let byte_stream = proxy::proxy_response_stream(
-            &state.http,
-            &state.credentials,
-            state.db.clone(),
-            auth,
-            body,
-            state.capture_sink(),
-        )
-        .await?;
+        let byte_stream = proxy::proxy_response_stream(&state, auth, body).await?;
         let body = Body::from_stream(byte_stream);
         Ok(Response::builder()
             .status(StatusCode::OK)
@@ -47,19 +29,7 @@ pub async fn create_response(
             .body(body)
             .unwrap())
     } else {
-        #[cfg(not(feature = "capture"))]
-        let (val, _request_id) =
-            proxy::proxy_response(&state.http, &state.credentials, &state.db, &auth, body).await?;
-        #[cfg(feature = "capture")]
-        let (val, _request_id) = proxy::proxy_response(
-            &state.http,
-            &state.credentials,
-            &state.db,
-            &auth,
-            body,
-            state.capture_sink(),
-        )
-        .await?;
+        let (val, _request_id) = proxy::proxy_response(&state, &auth, body).await?;
         Ok(Json(val).into_response())
     }
 }

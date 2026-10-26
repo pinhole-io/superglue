@@ -30,7 +30,16 @@ bedrock:openai.gpt-oss-120b-1:0
 bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
 ```
 
-Bedrock does not publish `GET /v1/models`. Name each model on the gateway allowlist. Embeddings and the Files API are not on this route.
+The gateway lists models with `ListFoundationModels` and `ListInferenceProfiles`. An embedding model is `bedrock:embedding:{modelId}`.
+
+```text
+bedrock:embedding:amazon.titan-embed-text-v2:0
+bedrock:embedding:cohere.embed-english-v3
+```
+
+Titan text models and Cohere Embed models use `InvokeModel`. Titan accepts one string per request, up to 32 strings. Cohere accepts one batch of up to 96 strings. Image embedding models are rejected.
+
+The Files API is not on this route. Put image bytes in the chat message.
 
 ## Per-key rate limits
 
@@ -41,8 +50,11 @@ Pass `requests_per_second_for` (Python) / `requestsPerSecondFor` (JS/Kotlin) as 
 Rust callers can use `Client::embed` or `Client::embed_many` with a
 `provider:model` string. OpenAI-compatible providers use `/v1/embeddings`.
 
-The gateway exposes the same shape at `POST /v1/embeddings`. Anthropic,
-Amazon Bedrock, and TypeSafe do not support this capability.
+The gateway exposes the same shape at `POST /v1/embeddings`. Anthropic and
+TypeSafe do not support this capability.
+
+Amazon Bedrock embeds text with `InvokeModel`. Use
+`bedrock:embedding:amazon.titan-embed-text-v2:0` or a Cohere Embed model id.
 
 Use `provider:embedding:model` for a model that must appear in an embedding
 catalog. For example, use `openai:embedding:text-embedding-3-small`.
@@ -77,6 +89,30 @@ Set `max_upload_bytes` to cap inline attachment size (default 20 MB).
 ## Streaming with tools
 
 When tools are registered on the client, `stream()` runs the same multi-round tool loop as `complete()`, emitting token deltas between rounds. Kotlin, Python, and JS bindings all use `stream_complete_with_tools` when the tool registry is non-empty.
+
+## Self-hosted proxy providers
+
+A gateway operator can register an OpenAI-compatible server under its own prefix.
+Callers then use `slug:model`, for example `homelab:llama3.1`.
+
+The slug must not match a builtin provider. Builtin providers stay `openai`, `anthropic`, `xai`, `groq`, `openrouter`, `runinfra`, `vercel`, `bedrock`, and `typesafe`.
+
+Set the base URL without a `/v1` suffix. The gateway appends these paths:
+
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+- `POST /v1/embeddings`
+- `GET /v1/models`
+
+`homelab:org/model:tag` sends `org/model:tag` upstream.
+`homelab:embedding:bge-m3` sends `bge-m3` to the embeddings path.
+
+Only the master key can create or change a proxy. The upstream API key is optional. The gateway stores it encrypted with the master key. Responses show the last four characters.
+
+Allow a key to call the proxy with `homelab:*` or a literal model id.
+An unknown slug returns 400. A disabled proxy returns 403.
+
+This registry is gateway state. The in-process client does not load it.
 
 ## Examples
 

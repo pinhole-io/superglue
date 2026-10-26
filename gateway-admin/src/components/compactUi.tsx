@@ -1,3 +1,9 @@
+import type { ReactNode } from 'react'
+
+export function RowActions({ children }: { children: ReactNode }) {
+  return <div className="actions">{children}</div>
+}
+
 export function ChipRow({ items, limit = 2 }: { items: string[]; limit?: number }) {
   if (items.length === 0) return <span className="muted">—</span>
   const shown = items.slice(0, limit)

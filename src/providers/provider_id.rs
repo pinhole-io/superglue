@@ -157,20 +157,31 @@ impl ProviderId {
         self.uses_openai_compat() || matches!(self, ProviderId::Anthropic)
     }
 
-    /// Whether the provider exposes OpenAI-compatible `/v1/embeddings`.
+    /// Whether the provider can embed text.
     ///
-    /// The Bedrock OpenAI endpoint serves chat and Responses. It does not serve embeddings.
+    /// OpenAI-compatible providers use `/v1/embeddings`. Bedrock uses `InvokeModel`.
     #[must_use]
     pub fn supports_embeddings(self) -> bool {
-        self.uses_openai_compat() && !matches!(self, ProviderId::Bedrock)
+        self.uses_openai_compat()
     }
 
-    /// Whether `GET /v1/models` returns a catalog.
+    /// Whether the gateway can list models for this provider.
     ///
-    /// Bedrock runtime does not implement that route.
+    /// Bedrock uses `ListFoundationModels` and `ListInferenceProfiles`.
     #[must_use]
     pub fn lists_models(self) -> bool {
-        !matches!(self, ProviderId::Bedrock)
+        matches!(
+            self,
+            ProviderId::OpenAi
+                | ProviderId::Anthropic
+                | ProviderId::Xai
+                | ProviderId::Groq
+                | ProviderId::OpenRouter
+                | ProviderId::RunInfra
+                | ProviderId::Vercel
+                | ProviderId::Bedrock
+                | ProviderId::TypeSafe
+        )
     }
 }
 
@@ -282,9 +293,10 @@ mod tests {
         assert!(ProviderId::Bedrock.uses_responses_api());
         assert!(ProviderId::Bedrock.passthrough_reasoning_effort());
         assert!(ProviderId::Bedrock.supports_chat());
-        assert!(!ProviderId::Bedrock.supports_embeddings());
+        assert!(ProviderId::Bedrock.supports_embeddings());
         assert!(ProviderId::OpenAi.supports_embeddings());
-        assert!(!ProviderId::Bedrock.lists_models());
+        assert!(!ProviderId::Anthropic.supports_embeddings());
+        assert!(ProviderId::Bedrock.lists_models());
         assert!(ProviderId::OpenAi.lists_models());
         assert!(!ProviderId::Bedrock.requires_client_request_id());
         assert!(!ProviderId::Bedrock.uses_legacy_max_tokens());

@@ -158,7 +158,7 @@ Each virtual key requires at least one pattern in `allowed_models`:
 
 Keys with no allowlist rows are denied (explicit opt-in). The master key is unrestricted.
 
-`GET /v1/models` returns allowed model patterns for scoped keys. For the master key (or `*` allowlist), it fetches and merges model ids from each configured upstream provider (`openai:…`, `anthropic:…`, etc.) via each provider's `/v1/models` API.
+`GET /v1/models` returns allowed model patterns for scoped keys. For the master key, or a `*` allowlist, it returns the cached upstream model ids. The gateway fills that cache at startup. It fills the cache again every hour. `POST /v1/models/refresh` with the master key fetches the upstream lists now. A failed refresh keeps the previous list.
 
 ## Completions
 
@@ -238,7 +238,8 @@ Allowlist patterns use `typesafe:jev-latest` or `typesafe:*`. Token usage is rec
 | POST | `/v1/chat/completions` | any key | Proxy completion |
 | POST | `/v1/responses` | any key | Proxy Responses API (OpenAI-shaped; multi-provider) |
 | POST | `/v1/systemone` | any key | Proxy TypeSafe System One evaluation |
-| GET | `/v1/models` | any key | List allowed models |
+| GET | `/v1/models` | any key | List allowed models from the cache |
+| POST | `/v1/models/refresh` | master | Fetch upstream model lists now |
 | POST/GET | `/v1/keys` | master | Create/list virtual keys |
 | PATCH/DELETE | `/v1/keys/{id}` | master | Update/revoke keys |
 | POST/GET | `/v1/users` | master | Create/list users |
@@ -257,6 +258,42 @@ The gateway stores USD on each usage row in this order:
 4. `$0.00` only when none of those exist
 
 A failed generation lookup does not fail the user request. The gateway then uses the inline billed amount or the table.
+
+## Proxy providers
+
+A proxy provider is a self-hosted OpenAI-compatible server.
+Callers address it as `slug:model`.
+
+```bash
+superglue gateway proxy create \
+  --slug homelab \
+  --base-url http://127.0.0.1:11434 \
+  --api-key "$HOMELAB_KEY"
+
+superglue gateway proxy list
+superglue gateway proxy update --slug homelab --enabled false
+superglue gateway proxy delete --slug homelab
+```
+
+Local and remote writes need `GATEWAY_MASTER_KEY`. The gateway uses that key to encrypt the upstream API key.
+
+Leave `--api-key` unset when the server does not use a bearer token.
+`--clear-api-key` removes a stored token.
+Leave the `/v1` suffix off `--base-url`.
+
+```bash
+curl -X POST http://localhost:8080/v1/proxy-providers \
+  -H "X-Superglue-Key: Bearer $GATEWAY_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"slug":"homelab","base_url":"http://127.0.0.1:11434","api_key":"secret","enabled":true}'
+```
+
+The admin UI can create, edit, and delete proxies on the Providers page.
+
+A proxy request uses the stored bearer token. It does not send the caller key.
+The gateway does not follow redirects from a proxy upstream.
+Cost is the billed amount on the usage object, or `$0.00` when that amount is absent.
+Proxy calls do not use the static price table or `GET /v1/generation`.
 
 ## SQLite
 

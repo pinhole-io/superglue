@@ -200,7 +200,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   height: 6px; flex: 1; overflow: hidden; border-radius: 99px; background: var(--color-secondary);
 }
 .progress-fill, .bar-fill { height: 100%; background: var(--accent); }
-.cell-inline, .spend-cell { display: inline-flex; align-items: center; gap: 8px; }
+.spend-cell { display: inline-flex; align-items: center; gap: 8px; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .info-tip {
@@ -215,6 +215,13 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .info-tip:hover { color: var(--accent); }
 
 .model-picker { display: grid; gap: 14px; }
+.model-catalog-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.model-catalog-bar p { margin: 0; font-size: 12px; }
 .model-family-stack { display: grid; gap: 18px; }
 .model-section {
   display: grid;
@@ -345,17 +352,16 @@ th {
   .app-shell { grid-template-columns: 1fr; }
   .app-sidebar {
     position: static;
+    min-height: 0;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--border);
     padding: 12px;
   }
-  .app-nav { display: flex; flex-wrap: wrap; gap: 8px; }
-  .nav-group { min-width: 120px; }
+  .app-main { padding: 16px 12px 32px; }
   .embedding-add-row { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 700px) {
-  table { display: block; overflow-x: auto; white-space: nowrap; }
   .actions { flex-wrap: nowrap; }
 }

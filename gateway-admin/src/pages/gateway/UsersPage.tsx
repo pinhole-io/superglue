@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { shortId } from '../../components/compactDisplay'
+import { RowActions } from '../../components/compactUi'
 import { InfoTip } from '../../components/InfoTip'
 import { PageHeader } from '../../components/PageHeader'
 import { PaginatedTable } from '../../components/PaginatedTable'
@@ -19,6 +20,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { errorText } from '@/lib/utils'
 
 function formatReset(iso: string | null) {
   if (!iso) return '—'
@@ -63,7 +65,7 @@ export function GatewayUsersPage() {
         setBudgets(b.budgets)
         setProfiles(p.profiles)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
   }
 
   useEffect(() => { load() }, [])
@@ -79,7 +81,7 @@ export function GatewayUsersPage() {
       setForm({ user_id: '', alias: '', profile_id: '' })
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -88,7 +90,7 @@ export function GatewayUsersPage() {
       await api.updateUser(id, { profile_id: profile_id || null })
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -99,7 +101,7 @@ export function GatewayUsersPage() {
       setEditingAlias(null)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -111,7 +113,7 @@ export function GatewayUsersPage() {
       setDeleteResult(`Deleted user; ${result.keys_deleted} key(s) removed.`)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
       setPendingDelete(null)
     }
   }
@@ -167,18 +169,19 @@ export function GatewayUsersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pageRows.map((u) => {
+              {pageRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    No users.
+                  </TableCell>
+                </TableRow>
+              ) : pageRows.map((u) => {
                 const profile = u.profile_id ? profileMap[u.profile_id] : undefined
                 const budget = u.budget_id ? budgetMap[u.budget_id] : undefined
                 return (
                   <TableRow key={u.id}>
                     <TableCell className="font-mono" title={u.id}>{shortId(u.id)}</TableCell>
-                    <TableCell>
-                      <span className="cell-inline">
-                        <span>{u.alias ?? '—'}</span>
-                        <Button type="button" variant="outline" size="sm" onClick={() => setEditingAlias({ id: u.id, alias: u.alias ?? '' })}>Edit</Button>
-                      </span>
-                    </TableCell>
+                    <TableCell>{u.alias ?? '—'}</TableCell>
                     <TableCell>
                       <Select
                         value={u.profile_id ?? 'none'}
@@ -195,7 +198,7 @@ export function GatewayUsersPage() {
                         </SelectContent>
                       </Select>
                     </TableCell>
-                    <TableCell className="font-mono">
+                    <TableCell className="font-mono" title={budget?.id ?? profile?.budget_id ?? undefined}>
                       {budget
                         ? `${shortId(budget.id)} ($${budget.max_budget})`
                         : profile?.budget_id
@@ -209,8 +212,11 @@ export function GatewayUsersPage() {
                       </span>
                     </TableCell>
                     <TableCell className="font-mono">{formatReset(u.next_budget_reset_at)}</TableCell>
-                    <TableCell className="actions">
-                      <Button type="button" variant="destructive" size="sm" onClick={() => setPendingDelete(u)}>Delete</Button>
+                    <TableCell>
+                      <RowActions>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setEditingAlias({ id: u.id, alias: u.alias ?? '' })}>Edit</Button>
+                        <Button type="button" variant="destructive" size="sm" onClick={() => setPendingDelete(u)}>Delete</Button>
+                      </RowActions>
                     </TableCell>
                   </TableRow>
                 )

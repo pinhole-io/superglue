@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { compactTime, shortId, userLabel } from '../../components/compactDisplay'
+import { RowActions } from '../../components/compactUi'
 import { InfoTip } from '../../components/InfoTip'
 import { PageHeader } from '../../components/PageHeader'
 import { PaginatedTable } from '../../components/PaginatedTable'
@@ -20,6 +21,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { errorText } from '@/lib/utils'
 
 export function GatewayBudgetsPage() {
   const [budgets, setBudgets] = useState<GatewayBudget[]>([])
@@ -43,7 +45,7 @@ export function GatewayBudgetsPage() {
         setResets(r.resets)
         setUsers(u.users)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
   }
   useEffect(() => { load() }, [])
 
@@ -53,7 +55,7 @@ export function GatewayBudgetsPage() {
       setShowCreate(false)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -68,7 +70,7 @@ export function GatewayBudgetsPage() {
       setEditing(null)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -80,7 +82,7 @@ export function GatewayBudgetsPage() {
       setNotice(`Deleted budget; cleared ${result.users_cleared} user(s).`)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
       setPendingDelete(null)
     }
   }
@@ -114,15 +116,23 @@ export function GatewayBudgetsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pageRows.map((b) => (
+              {pageRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    No budgets.
+                  </TableCell>
+                </TableRow>
+              ) : pageRows.map((b) => (
                 <TableRow key={b.id}>
                   <TableCell className="font-mono" title={b.id}>{shortId(b.id)}</TableCell>
                   <TableCell>${b.max_budget.toFixed(2)}</TableCell>
                   <TableCell>{Math.round(b.duration_sec / 86400)}d</TableCell>
                   <TableCell>{b.enforce ? 'yes' : 'no'}</TableCell>
-                  <TableCell className="actions">
-                    <Button type="button" variant="outline" size="sm" onClick={() => setEditing({ ...b })}>Edit</Button>
-                    <Button type="button" variant="destructive" size="sm" onClick={() => setPendingDelete(b)}>Delete</Button>
+                  <TableCell>
+                    <RowActions>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setEditing({ ...b })}>Edit</Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => setPendingDelete(b)}>Delete</Button>
+                    </RowActions>
                   </TableCell>
                 </TableRow>
               ))}

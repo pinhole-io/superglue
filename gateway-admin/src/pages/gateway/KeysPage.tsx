@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { shortId, userLabel } from '../../components/compactDisplay'
-import { ChipRow } from '../../components/compactUi'
+import { ChipRow, RowActions } from '../../components/compactUi'
 import { FamilyBadge } from '../../components/FamilyBadge'
 import { UserSelect } from '../../components/GatewayEntitySelect'
 import { InfoTip } from '../../components/InfoTip'
@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { errorText } from '@/lib/utils'
 
 const REASONING_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
@@ -101,7 +102,7 @@ export function GatewayKeysPage() {
         setUsers(u.users)
         setProfiles(p.profiles)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
   }
   useEffect(() => {
     load()
@@ -133,7 +134,7 @@ export function GatewayKeysPage() {
       })
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -166,7 +167,7 @@ export function GatewayKeysPage() {
       setEditing(null)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -196,7 +197,7 @@ export function GatewayKeysPage() {
       setNotice(`Applied profile “${profile.name}” to key ${shortId(key.key_prefix)}.`)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -205,7 +206,7 @@ export function GatewayKeysPage() {
       await api.updateKey(key.id, { active: !key.active })
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -216,7 +217,7 @@ export function GatewayKeysPage() {
       setPendingRevoke(null)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
       setPendingRevoke(null)
     }
   }
@@ -255,7 +256,13 @@ export function GatewayKeysPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pageRows.map((k) => {
+              {pageRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-center text-muted-foreground">
+                    No keys.
+                  </TableCell>
+                </TableRow>
+              ) : pageRows.map((k) => {
                 const meta = parseMetadata(k.metadata_json)
                 const user = userById[k.user_id]
                 const hasProfile = Boolean(user?.profile_id && profileById[user.profile_id]?.enabled)
@@ -273,19 +280,21 @@ export function GatewayKeysPage() {
                       {typeof meta.max_reasoning_effort === 'string' ? meta.max_reasoning_effort : '—'}
                     </TableCell>
                     <TableCell><ChipRow items={k.allowed_models} /></TableCell>
-                    <TableCell className="actions">
-                      <Button type="button" variant="outline" size="sm" onClick={() => openEdit(k)}>Edit</Button>
-                      {hasProfile ? (
-                        <Button type="button" variant="outline" size="sm" onClick={() => applyProfileDefaults(k)}>
-                          Apply profile defaults
+                    <TableCell>
+                      <RowActions>
+                        <Button type="button" variant="outline" size="sm" onClick={() => openEdit(k)}>Edit</Button>
+                        {hasProfile ? (
+                          <Button type="button" variant="outline" size="sm" onClick={() => applyProfileDefaults(k)}>
+                            Apply profile defaults
+                          </Button>
+                        ) : null}
+                        <Button type="button" variant="outline" size="sm" onClick={() => toggleActive(k)}>
+                          {k.active ? 'Disable' : 'Enable'}
                         </Button>
-                      ) : null}
-                      <Button type="button" variant="outline" size="sm" onClick={() => toggleActive(k)}>
-                        {k.active ? 'Disable' : 'Enable'}
-                      </Button>
-                      <Button type="button" variant="destructive" size="sm" onClick={() => setPendingRevoke(k)}>
-                        Revoke
-                      </Button>
+                        <Button type="button" variant="destructive" size="sm" onClick={() => setPendingRevoke(k)}>
+                          Revoke
+                        </Button>
+                      </RowActions>
                     </TableCell>
                   </TableRow>
                 )

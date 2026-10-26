@@ -7,6 +7,7 @@ import type {
   GatewayKey,
   GatewayProfile,
   GatewayProviderStatus,
+  GatewayProxyProvider,
   GatewayUsage,
   GatewayUser,
   GatewayHealth,
@@ -68,7 +69,11 @@ export const api = {
       error: null,
     }
   },
-  models: () => request<{ data: { id: string }[] }>('/v1/models'),
+  models: () => request<{ data: { id: string }[]; refreshed_at: number | null }>('/v1/models'),
+  refreshModels: () =>
+    request<{ data: { id: string }[]; refreshed_at: number | null }>('/v1/models/refresh', {
+      method: 'POST',
+    }),
   users: () => request<{ users: GatewayUser[] }>('/v1/users'),
   createUser: (body: {
     user_id: string
@@ -149,6 +154,30 @@ export const api = {
   budgetResets: (params: { user_id?: string; limit?: number }) =>
     request<{ resets: BudgetResetLog[] }>(`/v1/budget-resets${query(params)}`),
   providers: () => request<{ providers: GatewayProviderStatus[] }>('/v1/providers'),
+  proxyProviders: () => request<{ providers: GatewayProxyProvider[] }>('/v1/proxy-providers'),
+  createProxyProvider: (body: {
+    slug: string
+    label?: string
+    base_url: string
+    api_key?: string
+    enabled: boolean
+  }) =>
+    request<GatewayProxyProvider>('/v1/proxy-providers', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateProxyProvider: (
+    slug: string,
+    body: { label?: string; base_url?: string; api_key?: string; enabled?: boolean },
+  ) =>
+    request<GatewayProxyProvider>(`/v1/proxy-providers/${encodeURIComponent(slug)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteProxyProvider: (slug: string) =>
+    request<{ deleted: string }>(`/v1/proxy-providers/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+    }),
   captureStatus: () => request<CaptureStatus>('/v1/capture/status'),
   captureRecords: (params: {
     user_id?: string

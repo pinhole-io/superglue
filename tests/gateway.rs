@@ -686,6 +686,104 @@ async fn list_models_fetches_upstream_for_master_key() {
 }
 
 #[tokio::test]
+async fn model_catalog_is_cached_until_refresh() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{ "id": "gpt-4o-mini", "object": "model" }]
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_openai(
+        MASTER_KEY,
+        &dir.path().join("gw.db"),
+        &server.uri(),
+        "sk-test",
+    );
+    let app = router(state);
+
+    let first = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/models", MASTER_KEY, None))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body = body_to_json(first.into_body()).await;
+    assert_eq!(first_body["data"][0]["id"], "openai:gpt-4o-mini");
+    assert!(first_body["refreshed_at"].is_null());
+
+    let second = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/models", MASTER_KEY, None))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(upstream_model_fetches(&server).await, 1);
+
+    app.clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/users",
+            MASTER_KEY,
+            Some(json!({ "user_id": "user-1" })),
+        ))
+        .await
+        .unwrap();
+    let key_resp = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({
+                "user_id": "user-1",
+                "allowed_models": ["openai:*"]
+            })),
+        ))
+        .await
+        .unwrap();
+    let virtual_key = body_to_json(key_resp.into_body()).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let denied = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/models/refresh",
+            &virtual_key,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(upstream_model_fetches(&server).await, 1);
+
+    let refreshed = app
+        .oneshot(auth_request("POST", "/v1/models/refresh", MASTER_KEY, None))
+        .await
+        .unwrap();
+    assert_eq!(refreshed.status(), StatusCode::OK);
+    let body = body_to_json(refreshed.into_body()).await;
+    assert_eq!(body["data"][0]["id"], "openai:gpt-4o-mini");
+    assert!(body["refreshed_at"].as_u64().is_some());
+    assert_eq!(upstream_model_fetches(&server).await, 2);
+}
+
+async fn upstream_model_fetches(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() == "/v1/models")
+        .count()
+}
+
+#[tokio::test]
 async fn list_models_enriches_literal_allowlist_windows() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -1654,6 +1752,57 @@ async fn virtual_key_proxies_embeddings() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_to_json(response.into_body()).await;
     assert_eq!(body["data"][0]["embedding"], json!([0.1, 0.2]));
+}
+
+#[tokio::test]
+async fn virtual_key_proxies_bedrock_embeddings_through_invoke_model() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.titan-embed-text-v2%3A0/invoke"))
+        .and(body_json(json!({
+            "inputText": "hello"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "embedding": [0.5, 1.0],
+            "inputTextTokenCount": 1
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_provider(
+        MASTER_KEY,
+        &dir.path().join("gw.db"),
+        ProviderId::Bedrock,
+        &format!("{}/openai", server.uri()),
+        "bedrock-test",
+    );
+    let app = router(state);
+    let virtual_key = setup_virtual_key(
+        app.clone(),
+        &["bedrock:embedding:amazon.titan-embed-text-v2:0"],
+    )
+    .await;
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/embeddings",
+            &virtual_key,
+            Some(json!({
+                "model": "bedrock:embedding:amazon.titan-embed-text-v2:0",
+                "input": "hello"
+            })),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_to_json(response.into_body()).await;
+    assert_eq!(body["object"], json!("list"));
+    assert_eq!(body["data"][0]["embedding"], json!([0.5, 1.0]));
+    assert_eq!(body["model"], json!("amazon.titan-embed-text-v2:0"));
+    assert_eq!(body["usage"]["prompt_tokens"], json!(1));
 }
 
 #[tokio::test]

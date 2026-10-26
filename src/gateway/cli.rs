@@ -135,6 +135,11 @@ pub enum GatewayCommand {
         #[command(subcommand)]
         command: ModelCommand,
     },
+    /// Manage self-hosted OpenAI-compatible proxy providers.
+    Proxy {
+        #[command(subcommand)]
+        command: ProxyCommand,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -322,6 +327,57 @@ pub enum ModelCommand {
 }
 
 #[derive(Subcommand, Clone, Debug)]
+pub enum ProxyCommand {
+    /// Register a self-hosted OpenAI-compatible upstream.
+    Create {
+        /// Provider prefix used in `slug:model`.
+        #[arg(long)]
+        slug: String,
+        /// Base URL without a trailing `/v1`.
+        #[arg(long)]
+        base_url: String,
+        #[arg(long)]
+        label: Option<String>,
+        /// Upstream bearer token. Omit it when the server has no key.
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long, default_value_t = true)]
+        enabled: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        output: OutputFormat,
+    },
+    /// List proxy providers. The API key is not printed.
+    List {
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        output: OutputFormat,
+    },
+    /// Update a proxy provider.
+    Update {
+        #[arg(long)]
+        slug: String,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Replace the upstream bearer token.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Remove the stored upstream bearer token.
+        #[arg(long, default_value_t = false)]
+        clear_api_key: bool,
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        output: OutputFormat,
+    },
+    /// Delete a proxy provider.
+    Delete {
+        #[arg(long)]
+        slug: String,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
 pub enum UsageCommand {
     /// List usage log entries.
     List {
@@ -417,6 +473,13 @@ pub async fn execute(db_args: &DbArgs, command: GatewayCommand) -> Result<(), Ga
                 run_model_remote(db_args, command).await
             } else {
                 run_model_local(db_args, command).await
+            }
+        }
+        GatewayCommand::Proxy { command } => {
+            if db_args.url.is_some() {
+                run_proxy_remote(db_args, command).await
+            } else {
+                run_proxy(db_args, command)
             }
         }
     }
@@ -806,9 +869,22 @@ async fn run_model_local(db_args: &DbArgs, command: ModelCommand) -> GatewayResu
                 crate::gateway::auth::authenticate(&db, &api_key, &master_key_hash(db_args)?)?;
             let http = crate::http::HttpClient::new(crate::http::ClientConfig::default())
                 .map_err(|e| GatewayError::Internal(e.to_string()))?;
+            let proxy_http = crate::http::HttpClient::new_without_redirects(
+                crate::http::ClientConfig::default(),
+            )
+            .map_err(|e| GatewayError::Internal(e.to_string()))?;
             let credentials = crate::providers::ProviderCredentials::from_env();
-            let models =
-                crate::gateway::model_catalog::list_models(&http, &credentials, &auth).await?;
+            let master = require_master_key(db_args)?;
+            let proxies = crate::gateway::proxy_provider::enabled_list_targets(&db, &master)?;
+            let models = crate::gateway::model_catalog::list_gateway_models(
+                &http,
+                &proxy_http,
+                &credentials,
+                &auth,
+                None,
+                &proxies,
+            )
+            .await?;
             print_models(&models, output);
         }
     }
@@ -825,6 +901,193 @@ async fn run_model_remote(db_args: &DbArgs, command: ModelCommand) -> GatewayRes
         }
     }
     Ok(())
+}
+
+fn run_proxy(db_args: &DbArgs, command: ProxyCommand) -> GatewayResult<()> {
+    let db = open_db(&db_args.db)?;
+    match command {
+        ProxyCommand::Create {
+            slug,
+            base_url,
+            label,
+            api_key,
+            enabled,
+            output,
+        } => {
+            let master = require_master_key(db_args)?;
+            let record = crate::gateway::proxy_provider::create_proxy_provider(
+                &db,
+                &master,
+                crate::gateway::proxy_provider::ProxyProviderInput {
+                    slug,
+                    label,
+                    base_url,
+                    api_key,
+                    enabled,
+                },
+            )?;
+            print_proxy(&record, output, "Created");
+        }
+        ProxyCommand::List { output } => {
+            let rows = db.list_proxy_providers()?;
+            print_value(&rows, output, |rows| {
+                if rows.is_empty() {
+                    println!("No proxy providers.");
+                    return;
+                }
+                for row in rows {
+                    println!(
+                        "{}  enabled={}  key={}  {}",
+                        row.slug,
+                        row.enabled,
+                        row.key_suffix.as_deref().unwrap_or("-"),
+                        row.base_url,
+                    );
+                }
+            });
+        }
+        ProxyCommand::Update {
+            slug,
+            label,
+            base_url,
+            api_key,
+            clear_api_key,
+            enabled,
+            output,
+        } => {
+            if clear_api_key && api_key.is_some() {
+                return Err(GatewayError::bad_request(
+                    "pass either --api-key or --clear-api-key",
+                ));
+            }
+            let master = require_master_key(db_args)?;
+            let api_key = if clear_api_key {
+                Some(String::new())
+            } else {
+                api_key
+            };
+            let record = crate::gateway::proxy_provider::update_proxy_provider(
+                &db,
+                &master,
+                &slug,
+                crate::gateway::proxy_provider::ProxyProviderChanges {
+                    label,
+                    base_url,
+                    enabled,
+                    api_key,
+                },
+            )?;
+            print_proxy(&record, output, "Updated");
+        }
+        ProxyCommand::Delete { slug } => {
+            let _master = require_master_key(db_args)?;
+            let deleted = crate::gateway::proxy_provider::delete_proxy_provider(&db, &slug)?;
+            println!("Deleted proxy provider {deleted}");
+        }
+    }
+    Ok(())
+}
+
+async fn run_proxy_remote(db_args: &DbArgs, command: ProxyCommand) -> GatewayResult<()> {
+    let client = db_args.remote_client()?;
+    match command {
+        ProxyCommand::Create {
+            slug,
+            base_url,
+            label,
+            api_key,
+            enabled,
+            output,
+        } => {
+            let record = client
+                .create_proxy_provider(
+                    &slug,
+                    label.as_deref(),
+                    &base_url,
+                    api_key.as_deref(),
+                    enabled,
+                )
+                .await?;
+            print_proxy(&record, output, "Created");
+        }
+        ProxyCommand::List { output } => {
+            let rows = client.list_proxy_providers().await?;
+            print_value(&rows, output, |rows| {
+                if rows.is_empty() {
+                    println!("No proxy providers.");
+                    return;
+                }
+                for row in rows {
+                    println!(
+                        "{}  enabled={}  key={}  {}",
+                        row.slug,
+                        row.enabled,
+                        row.key_suffix.as_deref().unwrap_or("-"),
+                        row.base_url,
+                    );
+                }
+            });
+        }
+        ProxyCommand::Update {
+            slug,
+            label,
+            base_url,
+            api_key,
+            clear_api_key,
+            enabled,
+            output,
+        } => {
+            if clear_api_key && api_key.is_some() {
+                return Err(GatewayError::bad_request(
+                    "pass either --api-key or --clear-api-key",
+                ));
+            }
+            let api_key = if clear_api_key {
+                Some(String::new())
+            } else {
+                api_key
+            };
+            let record = client
+                .update_proxy_provider(
+                    &slug,
+                    label.as_deref(),
+                    base_url.as_deref(),
+                    api_key.as_deref(),
+                    enabled,
+                )
+                .await?;
+            print_proxy(&record, output, "Updated");
+        }
+        ProxyCommand::Delete { slug } => {
+            let deleted = client.delete_proxy_provider(&slug).await?;
+            println!("Deleted proxy provider {deleted}");
+        }
+    }
+    Ok(())
+}
+
+fn print_proxy(record: &crate::gateway::db::ProxyProviderRecord, format: OutputFormat, verb: &str) {
+    print_value(record, format, |record| {
+        println!("{verb} proxy provider {}", record.slug);
+        println!("  label: {}", record.label);
+        println!("  base_url: {}", record.base_url);
+        println!("  key: {}", record.key_suffix.as_deref().unwrap_or("-"));
+        println!("  enabled: {}", record.enabled);
+    });
+}
+
+fn require_master_key(db_args: &DbArgs) -> GatewayResult<String> {
+    db_args
+        .master_key
+        .clone()
+        .or_else(|| std::env::var("GATEWAY_MASTER_KEY").ok())
+        .or_else(|| operator_env_value("GATEWAY_MASTER_KEY"))
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| {
+            GatewayError::Internal(
+                "master key required to manage proxy providers (GATEWAY_MASTER_KEY)".into(),
+            )
+        })
 }
 
 fn print_models(models: &[serde_json::Value], format: OutputFormat) {

@@ -12,11 +12,13 @@ use uuid::Uuid;
 
 use crate::chat::{ChatError, ChatOptions, proxy_chat_post, proxy_chat_stream};
 use crate::costing::{apply_resolved_cost_usd, fetch_generation_cost_usd};
+use crate::gateway::GatewayState;
 use crate::gateway::auth::AuthContext;
 use crate::gateway::budget::check_budget;
 use crate::gateway::db::Database;
 use crate::gateway::error::{GatewayError, GatewayResult};
 use crate::gateway::model_access;
+use crate::gateway::proxy_provider::{self, ProxyTarget};
 use crate::http::{HttpClient, sse::SseParser};
 use crate::openai::{ChatCompletionChunk, ChatCompletionRequest, ChatMessage};
 use crate::proto;
@@ -288,13 +290,15 @@ fn usage_from_responses_json(u: &Value) -> proto::Usage {
 
 /// Non-streaming Responses proxy.
 pub async fn proxy_response(
-    http: &HttpClient,
-    credentials: &Arc<crate::providers::ProviderCredentials>,
-    db: &Database,
+    state: &GatewayState,
     auth: &AuthContext,
     body: GatewayResponsesBody,
-    #[cfg(feature = "capture")] capture: Option<Arc<CaptureSink>>,
 ) -> GatewayResult<(Value, String)> {
+    let http = state.http.as_ref();
+    let credentials = &state.credentials;
+    let db = &state.db;
+    #[cfg(feature = "capture")]
+    let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(auth, body.user.as_deref())?;
     let model = body.model.clone();
@@ -315,6 +319,27 @@ pub async fn proxy_response(
         #[cfg(feature = "capture")]
         tap.finish_err(err.to_string());
         return Err(err);
+    }
+    if proxy_provider::is_proxy_model(&model) {
+        let target = match load_proxy(state, &model).await {
+            Ok(target) => target,
+            Err(err) => {
+                #[cfg(feature = "capture")]
+                tap.finish_err(err.to_string());
+                return Err(err);
+            }
+        };
+        return forward_proxy_response(
+            state,
+            auth,
+            body,
+            target,
+            request_id,
+            user_id,
+            #[cfg(feature = "capture")]
+            tap,
+        )
+        .await;
     }
 
     let mut options = chat_options_from_responses(&body, &request_id);
@@ -379,15 +404,17 @@ pub async fn proxy_response(
 
 /// Streaming Responses proxy.
 pub async fn proxy_response_stream(
-    http: &HttpClient,
-    credentials: &Arc<crate::providers::ProviderCredentials>,
-    db: Database,
+    state: &GatewayState,
     auth: AuthContext,
     body: GatewayResponsesBody,
-    #[cfg(feature = "capture")] capture: Option<Arc<CaptureSink>>,
 ) -> GatewayResult<
     impl futures_util::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static,
 > {
+    let http = state.http.as_ref();
+    let credentials = &state.credentials;
+    let db = state.db.clone();
+    #[cfg(feature = "capture")]
+    let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(&auth, body.user.as_deref())?;
     let model = body.model.clone();
@@ -408,6 +435,27 @@ pub async fn proxy_response_stream(
         #[cfg(feature = "capture")]
         tap.finish_err(err.to_string());
         return Err(err);
+    }
+    if proxy_provider::is_proxy_model(&model) {
+        let target = match load_proxy(state, &model).await {
+            Ok(target) => target,
+            Err(err) => {
+                #[cfg(feature = "capture")]
+                tap.finish_err(err.to_string());
+                return Err(err);
+            }
+        };
+        return forward_proxy_response_stream(
+            state,
+            auth,
+            body,
+            target,
+            request_id,
+            user_id,
+            #[cfg(feature = "capture")]
+            tap,
+        )
+        .await;
     }
 
     let mut options = chat_options_from_responses(&body, &request_id);
@@ -635,13 +683,15 @@ pub fn preflight(
 
 /// Non-streaming completion proxy.
 pub async fn proxy_completion(
-    http: &HttpClient,
-    credentials: &Arc<crate::providers::ProviderCredentials>,
-    db: &Database,
+    state: &GatewayState,
     auth: &AuthContext,
     body: GatewayCompletionBody,
-    #[cfg(feature = "capture")] capture: Option<Arc<CaptureSink>>,
 ) -> GatewayResult<(Value, String)> {
+    let http = state.http.as_ref();
+    let credentials = &state.credentials;
+    let db = &state.db;
+    #[cfg(feature = "capture")]
+    let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(auth, body.user.as_deref())?;
     #[cfg(feature = "capture")]
@@ -661,6 +711,28 @@ pub async fn proxy_completion(
         #[cfg(feature = "capture")]
         tap.finish_err(err.to_string());
         return Err(err);
+    }
+    if proxy_provider::is_proxy_model(&body.completion.model) {
+        let model = body.completion.model.clone();
+        let target = match load_proxy(state, &model).await {
+            Ok(target) => target,
+            Err(err) => {
+                #[cfg(feature = "capture")]
+                tap.finish_err(err.to_string());
+                return Err(err);
+            }
+        };
+        return forward_proxy_completion(
+            state,
+            auth,
+            body,
+            target,
+            request_id,
+            user_id,
+            #[cfg(feature = "capture")]
+            tap,
+        )
+        .await;
     }
 
     let mut options = chat_options_from_request(&body.completion, &request_id);
@@ -726,15 +798,17 @@ pub async fn proxy_completion(
 
 /// Streaming completion proxy — forwards SSE bytes and logs usage after the stream ends.
 pub async fn proxy_completion_stream(
-    http: &HttpClient,
-    credentials: &Arc<crate::providers::ProviderCredentials>,
-    db: Database,
+    state: &GatewayState,
     auth: AuthContext,
     body: GatewayCompletionBody,
-    #[cfg(feature = "capture")] capture: Option<Arc<CaptureSink>>,
 ) -> GatewayResult<
     impl futures_util::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static,
 > {
+    let http = state.http.as_ref();
+    let credentials = &state.credentials;
+    let db = state.db.clone();
+    #[cfg(feature = "capture")]
+    let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(&auth, body.user.as_deref())?;
     let model = body.completion.model.clone();
@@ -755,6 +829,27 @@ pub async fn proxy_completion_stream(
         #[cfg(feature = "capture")]
         tap.finish_err(err.to_string());
         return Err(err);
+    }
+    if proxy_provider::is_proxy_model(&model) {
+        let target = match load_proxy(state, &model).await {
+            Ok(target) => target,
+            Err(err) => {
+                #[cfg(feature = "capture")]
+                tap.finish_err(err.to_string());
+                return Err(err);
+            }
+        };
+        return forward_proxy_completion_stream(
+            state,
+            &auth,
+            body,
+            target,
+            request_id,
+            user_id,
+            #[cfg(feature = "capture")]
+            tap,
+        )
+        .await;
     }
 
     let mut options = chat_options_from_request(&body.completion, &request_id);
@@ -866,6 +961,332 @@ pub async fn proxy_completion_stream(
     });
 
     Ok(ReceiverStream::new(rx))
+}
+
+async fn load_proxy(state: &GatewayState, model: &str) -> GatewayResult<ProxyTarget> {
+    let model = model.to_string();
+    let master = state.config.master_key_exposed().to_string();
+    state
+        .db
+        .run_blocking(move |db| proxy_provider::load_proxy_target(db, &master, &model))
+        .await
+}
+
+fn reject_proxy_embedding(target: &ProxyTarget) -> GatewayResult<()> {
+    if target.embedding {
+        Err(GatewayError::bad_request(
+            "embedding model cannot be used for chat; use POST /v1/embeddings",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn proxy_recorded_cost(usage: &proto::Usage) -> f64 {
+    usage.cost_usd.unwrap_or(0.0)
+}
+
+async fn post_proxy_json(
+    state: &GatewayState,
+    target: &ProxyTarget,
+    path: &str,
+    body: &Value,
+) -> GatewayResult<Value> {
+    let url = proxy_provider::join_proxy_url(&target.base_url, path);
+    let bearer = proxy_provider::authorization_value(target);
+    let mut headers = Vec::new();
+    if let Some(ref value) = bearer {
+        headers.push(("Authorization", value.as_str()));
+    }
+    state
+        .proxy_http
+        .post_json_with_headers(&url, body, &headers, None)
+        .await
+        .map_err(|error| GatewayError::upstream(error.to_string()))
+}
+
+async fn post_proxy_stream(
+    state: &GatewayState,
+    target: &ProxyTarget,
+    path: &str,
+    body: &Value,
+) -> GatewayResult<
+    impl futures_util::Stream<Item = Result<bytes::Bytes, crate::http::Error>> + Send + 'static,
+> {
+    let url = proxy_provider::join_proxy_url(&target.base_url, path);
+    let bearer = proxy_provider::authorization_value(target);
+    let mut headers = Vec::new();
+    if let Some(ref value) = bearer {
+        headers.push(("Authorization", value.as_str()));
+    }
+    state
+        .proxy_http
+        .post_json_stream_with_headers(&url, body, &headers, None)
+        .await
+        .map_err(|error| GatewayError::upstream(error.to_string()))
+}
+
+async fn forward_proxy_response(
+    state: &GatewayState,
+    auth: &AuthContext,
+    body: GatewayResponsesBody,
+    target: ProxyTarget,
+    request_id: String,
+    user_id: String,
+    #[cfg(feature = "capture")] mut tap: CaptureTap,
+) -> GatewayResult<(Value, String)> {
+    if let Err(err) = reject_proxy_embedding(&target) {
+        #[cfg(feature = "capture")]
+        tap.finish_err(err.to_string());
+        return Err(err);
+    }
+    let mut upstream = responses_body_value(body);
+    proxy_provider::prepare_responses_body(&mut upstream, &target, auth);
+    #[cfg(feature = "capture")]
+    tap.set_request(&upstream);
+    let val = match post_proxy_json(state, &target, "/v1/responses", &upstream).await {
+        Ok(val) => val,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
+    #[cfg(feature = "capture")]
+    {
+        tap.set_model_resolved(target.raw.clone());
+        tap.set_response(&val);
+    }
+    if let Some(usage) = val.get("usage") {
+        let proto_usage = usage_from_responses_json(usage);
+        let cost = proxy_recorded_cost(&proto_usage);
+        record_usage_async(
+            &state.db,
+            auth.key_id.as_deref(),
+            &user_id,
+            &target.raw,
+            &proto_usage,
+            cost,
+            &request_id,
+        )
+        .await?;
+        #[cfg(feature = "capture")]
+        tap.finish(Some(&proto_usage), Some(cost));
+    } else {
+        #[cfg(feature = "capture")]
+        tap.finish(None, None);
+    }
+    Ok((val, request_id))
+}
+
+async fn forward_proxy_completion(
+    state: &GatewayState,
+    auth: &AuthContext,
+    body: GatewayCompletionBody,
+    target: ProxyTarget,
+    request_id: String,
+    user_id: String,
+    #[cfg(feature = "capture")] mut tap: CaptureTap,
+) -> GatewayResult<(Value, String)> {
+    if let Err(err) = reject_proxy_embedding(&target) {
+        #[cfg(feature = "capture")]
+        tap.finish_err(err.to_string());
+        return Err(err);
+    }
+    let mut upstream = serde_json::to_value(&body.completion)
+        .map_err(|err| GatewayError::bad_request(err.to_string()))?;
+    proxy_provider::prepare_chat_body(&mut upstream, &target, auth);
+    #[cfg(feature = "capture")]
+    tap.set_request(&upstream);
+    let val = match post_proxy_json(state, &target, "/v1/chat/completions", &upstream).await {
+        Ok(val) => val,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
+    #[cfg(feature = "capture")]
+    {
+        tap.set_model_resolved(target.raw.clone());
+        tap.set_response(&val);
+    }
+    if let Some(extracted) = usage_from_chat_response(&val) {
+        let cost = proxy_recorded_cost(&extracted.usage);
+        record_usage_async(
+            &state.db,
+            auth.key_id.as_deref(),
+            &user_id,
+            &target.raw,
+            &extracted.usage,
+            cost,
+            &request_id,
+        )
+        .await?;
+        #[cfg(feature = "capture")]
+        tap.finish(Some(&extracted.usage), Some(cost));
+    } else {
+        #[cfg(feature = "capture")]
+        tap.finish(None, None);
+    }
+    Ok((val, request_id))
+}
+
+async fn forward_proxy_response_stream(
+    state: &GatewayState,
+    auth: AuthContext,
+    body: GatewayResponsesBody,
+    target: ProxyTarget,
+    request_id: String,
+    user_id: String,
+    #[cfg(feature = "capture")] mut tap: CaptureTap,
+) -> GatewayResult<ReceiverStream<Result<bytes::Bytes, std::io::Error>>> {
+    if let Err(err) = reject_proxy_embedding(&target) {
+        #[cfg(feature = "capture")]
+        tap.finish_err(err.to_string());
+        return Err(err);
+    }
+    let mut upstream = responses_body_value(body);
+    proxy_provider::prepare_responses_body(&mut upstream, &target, &auth);
+    #[cfg(feature = "capture")]
+    tap.set_request(&upstream);
+    let byte_stream = match post_proxy_stream(state, &target, "/v1/responses", &upstream).await {
+        Ok(stream) => stream,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
+    Ok(spawn_proxy_sse(
+        state.db.clone(),
+        byte_stream,
+        auth.key_id.clone(),
+        user_id,
+        target.raw,
+        request_id,
+        true,
+        #[cfg(feature = "capture")]
+        tap,
+    ))
+}
+
+async fn forward_proxy_completion_stream(
+    state: &GatewayState,
+    auth: &AuthContext,
+    body: GatewayCompletionBody,
+    target: ProxyTarget,
+    request_id: String,
+    user_id: String,
+    #[cfg(feature = "capture")] mut tap: CaptureTap,
+) -> GatewayResult<ReceiverStream<Result<bytes::Bytes, std::io::Error>>> {
+    if let Err(err) = reject_proxy_embedding(&target) {
+        #[cfg(feature = "capture")]
+        tap.finish_err(err.to_string());
+        return Err(err);
+    }
+    let mut upstream = serde_json::to_value(&body.completion)
+        .map_err(|err| GatewayError::bad_request(err.to_string()))?;
+    proxy_provider::prepare_chat_body(&mut upstream, &target, auth);
+    #[cfg(feature = "capture")]
+    tap.set_request(&upstream);
+    let byte_stream =
+        match post_proxy_stream(state, &target, "/v1/chat/completions", &upstream).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                #[cfg(feature = "capture")]
+                tap.finish_err(err.to_string());
+                return Err(err);
+            }
+        };
+    Ok(spawn_proxy_sse(
+        state.db.clone(),
+        byte_stream,
+        auth.key_id.clone(),
+        user_id,
+        target.raw,
+        request_id,
+        false,
+        #[cfg(feature = "capture")]
+        tap,
+    ))
+}
+
+fn spawn_proxy_sse(
+    db: Database,
+    byte_stream: impl futures_util::Stream<Item = Result<bytes::Bytes, crate::http::Error>>
+    + Send
+    + 'static,
+    key_id: Option<String>,
+    user_id: String,
+    model_raw: String,
+    request_id: String,
+    responses: bool,
+    #[cfg(feature = "capture")] mut tap: CaptureTap,
+) -> ReceiverStream<Result<bytes::Bytes, std::io::Error>> {
+    let (tx, rx) = mpsc::channel(GATEWAY_STREAM_BUFFER);
+    tokio::spawn(async move {
+        let mut stream = std::pin::pin!(byte_stream);
+        let mut parser = SseParser::new();
+        let mut round_usage: Option<proto::Usage> = None;
+        #[cfg(feature = "capture")]
+        tap.set_model_resolved(model_raw.clone());
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    if let Ok(events) = parser.push_str(&text) {
+                        for event in events {
+                            let data = event.data.trim();
+                            #[cfg(feature = "capture")]
+                            tap.push_sse(data);
+                            if data.is_empty() || data == "[DONE]" {
+                                continue;
+                            }
+                            let extracted = if responses {
+                                extract_openai_responses_usage(data)
+                            } else {
+                                extract_openai_chat_usage(data)
+                            };
+                            if let Some(extracted) = extracted {
+                                round_usage = Some(extracted.usage);
+                            }
+                        }
+                    }
+                    if tx.send(Ok(bytes)).await.is_err() {
+                        #[cfg(feature = "capture")]
+                        tap.finish(None, None);
+                        return;
+                    }
+                }
+                Err(err) => {
+                    #[cfg(feature = "capture")]
+                    tap.finish_err(err.to_string());
+                    let _ = tx.send(Err(std::io::Error::other(err.to_string()))).await;
+                    return;
+                }
+            }
+        }
+        if let Some(usage) = round_usage {
+            let cost = proxy_recorded_cost(&usage);
+            let _ = record_usage_async(
+                &db,
+                key_id.as_deref(),
+                &user_id,
+                &model_raw,
+                &usage,
+                cost,
+                &request_id,
+            )
+            .await;
+            #[cfg(feature = "capture")]
+            tap.finish(Some(&usage), Some(cost));
+        } else {
+            #[cfg(feature = "capture")]
+            tap.finish(None, None);
+        }
+    });
+    ReceiverStream::new(rx)
 }
 
 #[cfg(test)]

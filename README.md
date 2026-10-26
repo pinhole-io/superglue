@@ -286,7 +286,7 @@ A Bedrock model id can contain a colon. The provider prefix is only the first co
 
 TypeSafe (`TYPESAFE_API_KEY`) is the System One evaluation API. It is separate from the chat providers above.
 
-Embeddings use `provider:embedding:model` when the model must appear in an embedding catalog. Example: `openai:embedding:text-embedding-3-small`.
+Embeddings use `provider:embedding:model` when the model must appear in an embedding catalog. Example: `openai:embedding:text-embedding-3-small`. Bedrock text embeddings use the same tag, for example `bedrock:embedding:amazon.titan-embed-text-v2:0`. The gateway catalog loads Bedrock foundation models and inference profiles.
 
 Voice example: `xai:grok-voice-think-fast-2.0` with the `realtime` feature and `XAI_API_KEY`.
 

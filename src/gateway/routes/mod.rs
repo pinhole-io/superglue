@@ -5,6 +5,7 @@ pub mod audio;
 pub mod completions;
 pub mod embeddings;
 pub mod health;
+pub mod proxy_providers;
 pub mod responses;
 pub mod systemone;
 
@@ -81,7 +82,17 @@ pub fn router(state: Arc<GatewayState>) -> Router {
         .route("/v1/usage/summary", get(admin::usage_summary))
         .route("/v1/usage/zero-cost", delete(admin::delete_zero_cost_usage))
         .route("/v1/budget-resets", get(admin::list_budget_resets))
-        .route("/v1/providers", get(admin::list_providers));
+        .route("/v1/providers", get(admin::list_providers))
+        .route(
+            "/v1/proxy-providers",
+            post(proxy_providers::create_proxy_provider).get(proxy_providers::list_proxy_providers),
+        )
+        .route(
+            "/v1/proxy-providers/{slug}",
+            patch(proxy_providers::update_proxy_provider)
+                .delete(proxy_providers::delete_proxy_provider),
+        )
+        .route("/v1/models/refresh", post(admin::refresh_models));
     #[cfg(feature = "capture")]
     let admin = admin
         .route(

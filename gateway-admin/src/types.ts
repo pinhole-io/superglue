@@ -99,12 +99,24 @@ export interface BudgetResetLog {
 export interface GatewayProviderStatus {
   id: string
   label: string
+  kind: 'builtin' | 'proxy'
   configured: boolean
   base_url: string
   key_suffix: string | null
   catalog_ok: boolean
   model_count: number
+  enabled?: boolean | null
   error?: string | null
+}
+
+export interface GatewayProxyProvider {
+  slug: string
+  label: string
+  base_url: string
+  key_suffix: string | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface CaptureConfigSummary {

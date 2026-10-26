@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { errorText } from '@/lib/utils'
 
 const MONTH_SEC = 2_592_000
 const DEFAULT_MODELS = ['openai:*', 'anthropic:*']
@@ -41,7 +42,7 @@ export function SetupWizard({
       setBudgetId(created.id)
       setStep('profile')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause))
     } finally {
       setBusy(false)
     }
@@ -64,7 +65,7 @@ export function SetupWizard({
       setProfileId(created.id)
       setStep('user')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause))
     } finally {
       setBusy(false)
     }
@@ -85,7 +86,7 @@ export function SetupWizard({
       })
       setStep('key')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause))
     } finally {
       setBusy(false)
     }
@@ -102,7 +103,7 @@ export function SetupWizard({
       setPlaintext(created)
       setStep('done')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause))
     } finally {
       setBusy(false)
     }

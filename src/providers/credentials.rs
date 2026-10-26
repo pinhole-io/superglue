@@ -140,7 +140,7 @@ pub(crate) fn bedrock_openai_base_url(explicit: Option<&str>, region: Option<&st
 }
 
 /// `us-east-1`, `us-gov-west-1`, and the same shape. Dots and slashes are rejected.
-fn is_aws_region(region: &str) -> bool {
+pub(crate) fn is_aws_region(region: &str) -> bool {
     if region.is_empty() || region.len() > 32 {
         return false;
     }

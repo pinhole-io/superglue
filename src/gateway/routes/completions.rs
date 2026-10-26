@@ -21,25 +21,7 @@ pub async fn chat_completions(
 ) -> Result<Response, GatewayError> {
     let stream = body.completion.stream.unwrap_or(false);
     if stream {
-        #[cfg(not(feature = "capture"))]
-        let byte_stream = proxy::proxy_completion_stream(
-            &state.http,
-            &state.credentials,
-            state.db.clone(),
-            auth,
-            body,
-        )
-        .await?;
-        #[cfg(feature = "capture")]
-        let byte_stream = proxy::proxy_completion_stream(
-            &state.http,
-            &state.credentials,
-            state.db.clone(),
-            auth,
-            body,
-            state.capture_sink(),
-        )
-        .await?;
+        let byte_stream = proxy::proxy_completion_stream(&state, auth, body).await?;
         let body = Body::from_stream(byte_stream);
         Ok(Response::builder()
             .status(StatusCode::OK)
@@ -48,20 +30,7 @@ pub async fn chat_completions(
             .body(body)
             .unwrap())
     } else {
-        #[cfg(not(feature = "capture"))]
-        let (val, _request_id) =
-            proxy::proxy_completion(&state.http, &state.credentials, &state.db, &auth, body)
-                .await?;
-        #[cfg(feature = "capture")]
-        let (val, _request_id) = proxy::proxy_completion(
-            &state.http,
-            &state.credentials,
-            &state.db,
-            &auth,
-            body,
-            state.capture_sink(),
-        )
-        .await?;
+        let (val, _request_id) = proxy::proxy_completion(&state, &auth, body).await?;
         Ok(Json(val).into_response())
     }
 }
@@ -70,9 +39,23 @@ pub async fn list_models(
     State(state): State<Arc<GatewayState>>,
     Auth(auth): Auth,
 ) -> Result<impl IntoResponse, GatewayError> {
-    let data = model_catalog::list_models(&state.http, &state.credentials, &auth).await?;
+    let master = state.config.master_key_exposed().to_string();
+    let proxies = state
+        .db
+        .run_blocking(move |db| crate::gateway::proxy_provider::enabled_list_targets(db, &master))
+        .await?;
+    let data = model_catalog::list_gateway_models(
+        &state.http,
+        &state.proxy_http,
+        &state.credentials,
+        &auth,
+        Some(&state.catalog),
+        &proxies,
+    )
+    .await?;
     Ok(Json(serde_json::json!({
         "object": "list",
         "data": data,
+        "refreshed_at": state.catalog.refreshed_at_ms(),
     })))
 }

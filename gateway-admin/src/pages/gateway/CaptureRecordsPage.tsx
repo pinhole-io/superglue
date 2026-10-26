@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { errorText } from '@/lib/utils'
 
 function defaultFrom(): string {
   return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
@@ -54,7 +55,7 @@ export function GatewayCaptureRecordsPage() {
         setRecords((prev) => (append ? [...prev, ...res.records] : res.records))
         setNextCursor(res.truncated ? res.next_cursor ?? null : null)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
       .finally(() => setLoading(false))
   }
 
@@ -64,7 +65,7 @@ export function GatewayCaptureRecordsPage() {
   }
 
   useEffect(() => {
-    api.users().then((u) => setUsers(u.users)).catch((e) => setError(String(e)))
+    api.users().then((u) => setUsers(u.users)).catch((e) => setError(errorText(e)))
     load(false)
   }, [])
 

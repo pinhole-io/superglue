@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { shortId } from '../../components/compactDisplay'
-import { ChipRow } from '../../components/compactUi'
+import { ChipRow, RowActions } from '../../components/compactUi'
 import { InfoTip } from '../../components/InfoTip'
 import { ModelPicker } from '../../components/ModelPicker'
 import { PageHeader } from '../../components/PageHeader'
@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { errorText } from '@/lib/utils'
 
 const REASONING_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
@@ -63,7 +64,7 @@ export function GatewayProfilesPage() {
         setProfiles(p.profiles)
         setBudgets(b.budgets)
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errorText(e)))
   }
 
   useEffect(() => {
@@ -85,7 +86,7 @@ export function GatewayProfilesPage() {
       setForm(emptyForm())
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -116,7 +117,7 @@ export function GatewayProfilesPage() {
       setEditing(null)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -125,7 +126,7 @@ export function GatewayProfilesPage() {
       await api.updateProfile(profile.id, { enabled: !profile.enabled })
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     }
   }
 
@@ -137,10 +138,12 @@ export function GatewayProfilesPage() {
       setNotice(`Deleted profile; cleared ${result.users_cleared} user link(s).`)
       load()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
       setPendingDelete(null)
     }
   }
+
+  const budgetById = Object.fromEntries(budgets.map((b) => [b.id, b]))
 
   return (
     <>
@@ -161,6 +164,7 @@ export function GatewayProfilesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>ID</TableHead>
                 <TableHead>Budget</TableHead>
                 <TableHead>Reasoning</TableHead>
                 <TableHead>Models</TableHead>
@@ -170,45 +174,58 @@ export function GatewayProfilesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pageRows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <div className="grid gap-0.5">
-                      <span className="font-medium">{p.name}</span>
-                      <span className="font-mono text-xs text-muted-foreground" title={p.id}>
-                        {shortId(p.id)}
-                      </span>
-                      {p.description ? (
-                        <span className="text-xs text-muted-foreground">{p.description}</span>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono">
-                    {p.budget_id ? shortId(p.budget_id) : '—'}
-                  </TableCell>
-                  <TableCell className="font-mono">
-                    {p.max_reasoning_effort ?? '—'}
-                  </TableCell>
-                  <TableCell><ChipRow items={p.allowed_models} /></TableCell>
-                  <TableCell>{p.user_count}</TableCell>
-                  <TableCell>
-                    <Badge variant={p.enabled ? 'default' : 'secondary'}>
-                      {p.enabled ? 'enabled' : 'disabled'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="actions">
-                    <Button type="button" variant="outline" size="sm" onClick={() => openEdit(p)}>
-                      Edit
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => toggleEnabled(p)}>
-                      {p.enabled ? 'Disable' : 'Enable'}
-                    </Button>
-                    <Button type="button" variant="destructive" size="sm" onClick={() => setPendingDelete(p)}>
-                      Delete
-                    </Button>
+              {pageRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                    No profiles.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : pageRows.map((p) => {
+                const budget = p.budget_id ? budgetById[p.budget_id] : undefined
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell className="whitespace-normal">
+                      <div className="grid gap-0.5">
+                        <span className="font-medium">{p.name}</span>
+                        {p.description ? (
+                          <span className="text-xs text-muted-foreground">{p.description}</span>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono" title={p.id}>{shortId(p.id)}</TableCell>
+                    <TableCell className="font-mono" title={p.budget_id ?? undefined}>
+                      {budget
+                        ? `${shortId(budget.id)} ($${budget.max_budget})`
+                        : p.budget_id
+                          ? shortId(p.budget_id)
+                          : '—'}
+                    </TableCell>
+                    <TableCell className="font-mono">
+                      {p.max_reasoning_effort ?? '—'}
+                    </TableCell>
+                    <TableCell><ChipRow items={p.allowed_models} /></TableCell>
+                    <TableCell>{p.user_count}</TableCell>
+                    <TableCell>
+                      <Badge variant={p.enabled ? 'default' : 'secondary'}>
+                        {p.enabled ? 'enabled' : 'disabled'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <RowActions>
+                        <Button type="button" variant="outline" size="sm" onClick={() => openEdit(p)}>
+                          Edit
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => toggleEnabled(p)}>
+                          {p.enabled ? 'Disable' : 'Enable'}
+                        </Button>
+                        <Button type="button" variant="destructive" size="sm" onClick={() => setPendingDelete(p)}>
+                          Delete
+                        </Button>
+                      </RowActions>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         )}
