@@ -3,6 +3,7 @@
 //! Chat stays on the OpenAI-compatible base URL. Embeddings and the model list
 //! use the hosts derived from that URL.
 
+#[cfg(any(test, feature = "gateway"))]
 use std::collections::HashSet;
 
 use serde_json::{Value, json};
@@ -14,8 +15,10 @@ pub(crate) const TITAN_MAX_TEXTS: usize = 32;
 /// Cohere Embed accepts one batch of this size.
 pub(crate) const COHERE_MAX_TEXTS: usize = 96;
 /// Bound on `ListInferenceProfiles` pages.
+#[cfg(feature = "gateway")]
 pub(crate) const MAX_PROFILE_PAGES: usize = 10;
 
+#[cfg(any(test, feature = "gateway"))]
 const MAX_LIST_TOKEN_LEN: usize = 2048;
 
 /// Runtime host for `InvokeModel`, and control host for the model list.
@@ -26,6 +29,7 @@ pub(crate) struct BedrockHosts {
 }
 
 /// One model id from `ListFoundationModels` or `ListInferenceProfiles`.
+#[cfg(any(test, feature = "gateway"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ListedModel {
     pub id: String,
@@ -51,6 +55,7 @@ pub(crate) struct TitanVector {
 pub(crate) struct InvalidModelId;
 
 /// `ListInferenceProfiles` returned a page token that cannot be sent.
+#[cfg(any(test, feature = "gateway"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InvalidListToken;
 
@@ -81,6 +86,7 @@ pub(crate) fn invoke_url(openai_base: &str, model_id: &str) -> Result<String, In
     Ok(format!("{}/model/{encoded}/invoke", hosts.runtime))
 }
 
+#[cfg(any(test, feature = "gateway"))]
 #[must_use]
 pub(crate) fn foundation_models_url(control: &str) -> String {
     format!(
@@ -89,6 +95,7 @@ pub(crate) fn foundation_models_url(control: &str) -> String {
     )
 }
 
+#[cfg(any(test, feature = "gateway"))]
 pub(crate) fn inference_profiles_url(
     control: &str,
     next_token: Option<&str>,
@@ -108,6 +115,7 @@ pub(crate) fn inference_profiles_url(
 }
 
 /// Read `nextToken`. An empty or missing token ends the list.
+#[cfg(any(test, feature = "gateway"))]
 pub(crate) fn page_token(body: &Value) -> Result<Option<String>, InvalidListToken> {
     match body.get("nextToken") {
         None | Some(Value::Null) => Ok(None),
@@ -192,6 +200,7 @@ pub(crate) fn parse_cohere_response(value: &Value) -> Result<Vec<Vec<f32>>, ()> 
 ///
 /// A profile is an embedding model when its id names an embedding foundation
 /// model, or when a member ARN does.
+#[cfg(any(test, feature = "gateway"))]
 pub(crate) fn catalog_models(
     foundation: &Value,
     profile_pages: &[Value],
@@ -276,6 +285,7 @@ fn usable_model_id(model_id: &str) -> bool {
     !model_id.is_empty() && !model_id.contains(['/', '?', '#', '\\'])
 }
 
+#[cfg(any(test, feature = "gateway"))]
 fn valid_list_token(token: &str) -> bool {
     (1..=MAX_LIST_TOKEN_LEN).contains(&token.len())
         && token.bytes().all(|byte| {
@@ -314,6 +324,7 @@ fn f32_array(value: &Value) -> Result<Vec<f32>, ()> {
         .collect()
 }
 
+#[cfg(any(test, feature = "gateway"))]
 fn output_is_embedding(summary: &Value) -> bool {
     summary
         .get("outputModalities")
@@ -325,6 +336,7 @@ fn output_is_embedding(summary: &Value) -> bool {
         })
 }
 
+#[cfg(any(test, feature = "gateway"))]
 fn profile_is_embedding(id: &str, models: Option<&Value>, embedding_ids: &HashSet<String>) -> bool {
     if embedding_ids.iter().any(|foundation| {
         foundation == id
@@ -346,6 +358,7 @@ fn profile_is_embedding(id: &str, models: Option<&Value>, embedding_ids: &HashSe
     })
 }
 
+#[cfg(any(test, feature = "gateway"))]
 fn push_model(models: &mut Vec<ListedModel>, seen: &mut HashSet<String>, model: ListedModel) {
     if !seen.insert(model.id.clone()) {
         if model.embedding
