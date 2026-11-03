@@ -29,4 +29,4 @@ tools.register({
 ## TypeScript
 
 - Run `npm run build:ts` after changing public `.d.ts` surface.
-- Keep `index.d.ts` contract aligned with [`superglue-kt`](../superglue-kt) JNI expectations.
+- Keep `index.d.ts` aligned with [`superglue-kt`](../../../superglue-kt) JNI expectations.

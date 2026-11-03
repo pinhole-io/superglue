@@ -2,72 +2,92 @@
 
 ## Principles
 
-- **Avoid a top-down rewrite**: ship narrow vertical slices that are testable and usable, then expand.
-- **Behavioral parity** with [`../../gluellm/`](../../gluellm/) as a guiding star; divergence is intentional and documented.
-- **Real usage drives priorities**: the Python binding is the first external-facing surface.
+- Ship a narrow slice, then widen it.
+- Record an intentional behavior change in these notes.
 
----
+## Phase 1: HTTP, retries, streaming
 
-## Phase 1: HTTP, retries, streaming ✅ complete
+Shipped.
 
-- ✅ `HttpClient` — authenticated HTTP requests (`reqwest`, `rustls-tls`).
-- ✅ Streaming responses via SSE framing (`SseParser`).
-- ✅ Timeouts, retries (GET and POST with distinct policies), and rate limits (`governor`).
-- ✅ Deterministic wiremock integration tests.
+- `HttpClient` with rustls
+- `SseParser`
+- Distinct GET and POST retry rules
+- `governor` rate limits
+- Wiremock tests
 
-## Phase 2: Tool boundary and Python binding ✅ complete
+## Phase 2: Tools and Python
 
-- ✅ `Tool` trait + `ToolRegistry` — async dispatch by name with JSON arguments/results.
-- ✅ `chat::complete_with_tools` — multi-turn tool loop against any OpenAI-compatible provider.
-- ✅ `tools::harness` — offline scripted execution plans for unit testing tool flows.
-- ✅ `superglue-py` Python binding (PyO3, maturin, CPython 3.14t free-threaded).
-- ✅ `Client.complete()` with Python dict tool callbacks delivered via `spawn_blocking`.
-- ✅ `Client.stream()` with per-token callback delivered via `mpsc` channel + `spawn_blocking`.
-- ✅ 14 Python example scripts covering: basic completion, system prompts, single/multiple tools, usage tracking, error handling, max rounds, custom base URL, concurrent completions, structured tool data, and streaming variants.
+Shipped.
 
-## Phase 3: Full OpenAI spec + protobuf schema ✅ complete
+- `Tool` and `ToolRegistry`
+- `complete_with_tools`
+- Offline harness
+- `superglue-py` on PyO3, CPython 3.12+ including 3.14t
+- `complete` and `stream` with host callbacks
 
-- ✅ Full `ChatCompletionRequest` — all OpenAI parameters (sampling, penalties, stop, response format, tool choice, logprobs, seed, store, service tier, reasoning effort, stream options).
-- ✅ Multipart message content (`MessageContent`: text, image_url, input_audio, file).
-- ✅ Complete response types — `Usage` with token details, `ChoiceLogprobs`, `Annotation`, `ChatCompletionChunk` for streaming.
-- ✅ `ChatOptions` exposes all key parameters; `From<proto::ChatOptions>` bridge.
-- ✅ `proto/superglue.proto` schema covering `ChatOptions`, `ChatMessage`, `Usage`, `ToolSpec`, `CompletionOutcome`.
-- ✅ `prost` + `protoc-bin-vendored` code generation via `build.rs`.
-- ✅ `stream_complete` — SSE streaming with usage in final chunk (`stream_options.include_usage`).
+## Phase 3: Provider types and protobuf
 
-## Phase 4: gRPC and additional bindings ✅ partial
+Shipped.
 
-- ✅ `tonic` gRPC server exposing `Complete`, `Stream`, `CompleteResponses`, and `StreamResponses` RPCs.
-- ✅ Audit trail — `HookEvent` + `RunRecord` proto types; `RunStore` + `RunRecorder`.
-- ✅ Proto-generated gRPC client stubs (`scripts/generate-proto-clients.sh`; Python + JS loader; Rust tonic client).
-- ✅ Node.js binding via `napi-rs`.
-- 🔲 Workflow engine and hook dispatch with protobuf event streams.
-- ✅ Replay / run-resume from recorded audit records (`audit::resume_*`).
+- OpenAI-shaped chat types, including multipart content
+- `proto/superglue.proto` and `prost` generation in `build.rs`
+- Streaming usage on the final SSE chunk
 
-## Phase 5: Hardening and ecosystem ✅ partial
+## Phase 4: gRPC, audit, and more bindings
 
-- ✅ Structured redaction and observability tiers — `ScrubMode` (Redact / Hash / Allow), OTLP export (`otlp` feature) (see [Observability](05-observability.md)).
-- ✅ Security hardening (Tier B) — `secrecy::Secret<String>` for API keys, `zeroize` on drop (see [Security and threat model](06-security-and-threat-model.md)).
-- ✅ Batch scheduling and parallel tool execution within a single turn (`join_all`).
-- ✅ Per-tool error policies (FailFast / Skip / Retry with exponential back-off).
-- ✅ Cooperative cancellation (`CancellationToken`) in batch and chat loops.
-- ✅ Throttled downloads (`governor` bandwidth limiter with progress callback).
-- ✅ Context optimization (GlueLLM parity): dynamic tool routing, tool-round condensing, AAAK encoding, history compression — see [Context optimization](11-context-optimization.md).
-- ✅ Programmatic tool calling (`tool_mode = Code`): `request_tools` returns a catalog; the model writes JavaScript for a singular `code` tool.
-- 🔲 Migration guide from Python GlueLLM (partial: context optimization flags documented in [11-context-optimization.md](11-context-optimization.md)).
+Shipped, except the workflow engine.
 
-## Continuous cross-cutting work
+- tonic RPCs: `Complete`, `Stream`, `CompleteResponses`, `StreamResponses`
+- `RunStore`, `RunRecorder`, `resume_chat`, `resume_response`
+- `scripts/generate-proto-clients.sh` for Python and JavaScript stubs
+- Node.js binding (`superglue-js`) and Kotlin JNI binding (`superglue-kt`)
+- Workflow engine: planned
 
-- **Observability**: `tracing` spans are present throughout; exporter wiring (`tracing-subscriber`, OTLP) can land any time.
-- **Testing**: wiremock integration tests gate streaming, tool loops, system prompts, and multipart content.
-- **Docs**: this directory tracks implementation status and is updated with each phase.
+## Phase 5: Hardening and context control
 
-## Phase 6: Realtime voice sessions
+Shipped.
 
-- ✅ `realtime` feature with a provider-neutral `VoiceSession` handle.
-- ✅ xAI Speech to Speech adapter for Grok Voice Think Fast 2.0.
-- ✅ Binary audio transport, transcripts, interruptions, and function-call events.
-- ✅ Cancellation closes the provider WebSocket.
-- ✅ Local scripted WebSocket tests and Rust example.
-- 🔲 OpenAI Realtime adapter and polyglot binding surfaces.
-- 🔲 Harn server proxy and desktop applet microphone and speaker integration.
+- `ScrubMode`: `Redact`, `Hash`, `Allow`
+- OTLP export (`otlp`) and Prometheus (`prometheus`)
+- `secrecy` API keys with `zeroize` on drop
+- Batch scheduling and parallel tools in one round
+- `FailFast`, `Skip`, and `Retry`
+- `CancellationToken` in chat and batch
+- Throttled downloads
+- Context optimization and code mode (`code`)
+- Embeddings, files, images, fallback, and System One
+
+## Phase 6: Realtime voice
+
+Shipped for xAI. Other adapters are planned.
+
+- `realtime` feature and `VoiceSession`
+- xAI Speech to Speech adapter
+- Binary audio, transcripts, interruptions, and function-call events
+- Cancel closes the provider WebSocket
+- Rust example `36_realtime_voice`
+- OpenAI Realtime adapter: planned
+- Voice methods on the language bindings: planned
+
+## Phase 7: LLM gateway
+
+Shipped.
+
+- OpenAI-compatible HTTP proxy (`gateway`)
+- Virtual keys, users, profiles, budgets, and usage in SQLite
+- Embeddings, Responses, System One, and file transcription routes
+- Self-hosted proxy providers
+- Admin UI in `gateway-admin/`
+- Optional S3 capture (`capture`)
+
+## Still planned
+
+- Workflow engine and protobuf workflow transitions
+- OpenAI Realtime adapter and voice APIs on the bindings
+
+Context flags are in [Context optimization](11-context-optimization.md).
+
+## Cross-cutting work
+
+- Keep wiremock coverage on streaming, tools, and provider adapters.
+- Update this directory when a phase changes status.

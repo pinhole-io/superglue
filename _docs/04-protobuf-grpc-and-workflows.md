@@ -1,134 +1,96 @@
 # Protobuf, gRPC, and workflows
 
-## Current status
+## Status
 
-**Protobuf schema is implemented**. **gRPC server is implemented** (feature-gated by `--features grpc`). **Audit resume/replay helpers are shipped** (`RunStore`, `RunRecorder`, `resume_chat`, `resume_response`). Workflow engine remains planned.
+The protobuf schema is shipped.
+The gRPC server is shipped behind the `grpc` feature.
+Audit resume helpers are shipped.
+The workflow engine is planned.
 
-## Why protobuf internally
+JSON stays the format for tool arguments and tool results.
+See [Tool boundary and async](03-tool-boundary-and-async.md).
 
-Workflows, hooks, configuration, and internal events are richer than ad hoc JSON blobs. A **canonical binary schema** provides:
+## Schema
 
-- Stable, versioned contracts between components and across language bindings.
-- Efficient serialization for high-volume event streams.
-- Generated types in multiple languages from the same `.proto` definitions.
+The source of truth is [`proto/superglue.proto`](../proto/superglue.proto).
+`build.rs` generates Rust with `prost`.
+Do not copy field lists into this note. Edit the `.proto` file, then regenerate stubs.
 
-**Decided direction**: protobuf is the internal source of truth for `ChatOptions`, `ChatMessage`, `Usage`, `ToolSpec`, `CompletionOutcome`, and related types. `prost` generates Rust; future language clients can generate from the same `.proto`.
+Messages:
 
-JSON remains appropriate for **tool arguments and results** at the host boundary (see [Tool boundary and async](03-tool-boundary-and-async.md)).
+| Message | Role |
+| --- | --- |
+| `ToolSpec`, `FunctionCall`, `ToolCall` | Tool metadata and one model tool call |
+| `ChatMessage`, `ChatOptions` | Chat transcript and sampling options |
+| `CompletionRequest`, `CompletionOutcome`, `Usage` | Unary chat RPC |
+| `ResponsesRequest`, `ResponsesOutcome` | Responses API RPC |
+| `HookEvent`, `RunRecord` | Audit trail |
+| `ProcessEvent`, `ProcessEventKind` | Status events |
+| `StreamChunk` | Server-streaming token |
 
-## Implemented schema (`proto/superglue.proto`)
+Service `SuperglueService`:
 
-```protobuf
-message ChatOptions {
-  string base_url         = 1;
-  string api_key          = 2;
-  string model            = 3;
-  uint32 max_tool_rounds  = 4;
-  optional string system_prompt = 5;
-
-  // Sampling
-  optional float  temperature         = 6;
-  optional float  top_p               = 7;
-  optional uint32 max_completion_tokens = 8;
-
-  // Penalties
-  optional float  presence_penalty    = 9;
-  optional float  frequency_penalty   = 10;
-
-  // Tool control
-  optional bool   parallel_tool_calls = 11;
-
-  // Logprobs
-  optional bool   logprobs            = 12;
-  optional uint32 top_logprobs        = 13;
-
-  // Determinism / storage
-  optional int64  seed                = 14;
-  optional bool   store               = 15;
-
-  // Service / reasoning
-  optional string service_tier        = 16;
-  optional string reasoning_effort    = 17;
-  optional string stop                = 18;
-  optional string extra_json          = 19;  // generic passthrough
-}
-
-message ChatMessage {
-  string role             = 1;
-  optional string content = 2;
-  optional string name    = 3;
-  optional string tool_call_id = 4;
-  optional string refusal = 6;
-}
-
-message Usage {
-  uint32 prompt_tokens     = 1;
-  uint32 completion_tokens = 2;
-  uint32 total_tokens      = 3;
-}
-
-message ToolSpec {
-  string name              = 1;
-  string parameters_schema = 2;  // JSON Schema as string
-  optional string description = 3;
-}
-
-message CompletionOutcome {
-  optional string content       = 1;
-  uint32          rounds        = 2;
-  optional Usage  usage         = 3;
-  optional string finish_reason = 4;
-}
-```
-
-## How proto types are used today
-
-The generated `proto::` types serve two roles:
-
-1. **Data representation**: `CompletionOutcome` carries `usage: Option<proto::Usage>` through the chat pipeline and out to language bindings.
-2. **Configuration bridge**: `From<proto::ChatOptions> for ChatOptions` allows configuration to be deserialized from protobuf and handed to the Rust chat functions — the path a gRPC server would use.
-
-## gRPC — implemented (`grpc` feature)
-
-The `tonic`-based gRPC server lives in `src/grpc/mod.rs` and is compiled with `--features grpc`. The deployment topology:
-
-```
-Host language  →  gRPC client (generated)  →  tonic server  →  Rust core
-```
-
-Two RPCs are exposed:
-
-| RPC | Type | Delegates to |
-|-----|------|-------------|
+| RPC | Shape | Core path |
+| --- | --- | --- |
 | `Complete` | Unary | `chat::complete_with_tools` |
-| `Stream` | Server-streaming | `chat::stream_complete` |
+| `Stream` | Server stream | `chat::stream_complete` |
 | `CompleteResponses` | Unary | `responses::complete_with_tools` |
-| `StreamResponses` | Server-streaming | `responses::stream_complete_with_tools` |
+| `StreamResponses` | Server stream | `responses::stream_complete_with_tools` |
 
-Start the server with `superglue serve --addr 127.0.0.1:50051 --api-key $KEY`. Bind `0.0.0.0` only when a firewall or reverse proxy owns the public edge.
+`From<proto::ChatOptions> for ChatOptions` is the bridge into the Rust chat types.
+`CompletionOutcome` carries `proto::Usage` through the pipeline and the bindings.
 
-Proto-generated Python/JS client stubs: run [`scripts/generate-proto-clients.sh`](../scripts/generate-proto-clients.sh) (Python via `grpcio-tools`; JS via `superglue-js/generated/client.ts` + `@grpc/proto-loader`). Rust tonic client is built with `--features grpc`.
+## Generate language stubs
+
+```bash
+bash scripts/generate-proto-clients.sh
+```
+
+The script writes Python stubs with `grpcio-tools` and a JavaScript loader under `superglue-js/generated/`.
+CI checks that the committed Python stubs match the schema.
+The Rust tonic client builds with `--features grpc`.
+
+## Run the server
+
+Build with the feature, then start the sidecar:
+
+```bash
+cargo build --features grpc --release
+export OPENAI_API_KEY="sk-..."
+./target/release/superglue serve --addr 127.0.0.1:50051
+```
+
+`--api-key` overrides the environment variable.
+`--base-url` defaults to `https://api.openai.com`.
+`--model` defaults to `gpt-5.4-nano-2026-03-17-mini`.
+Bind `0.0.0.0` only when a firewall or reverse proxy owns the public edge.
+
+The `serve` command builds an empty tool registry. Host tools stay on the in-process bindings.
 
 ## Deployment modes
 
 | Mode | Status | Notes |
-|------|--------|-------|
-| **In-process FFI (PyO3)** | ✅ shipped | `superglue-py`; targets CPython 3.14t free-threaded |
-| **gRPC / tonic sidecar** | ✅ shipped | `--features grpc`; `Complete`, `Stream`, `CompleteResponses`, `StreamResponses` |
-| **Embedded library** | ✅ shipped | `superglue` crate consumed directly by Rust callers |
+| --- | --- | --- |
+| In-process Rust | Shipped | Depend on this crate |
+| PyO3, napi-rs, JNI | Shipped | `superglue-py`, `superglue-js`, `superglue-kt` |
+| gRPC sidecar | Shipped | `--features grpc` |
 
-## Workflows and hooks
+## Audit and workflows
 
-Hook and workflow transitions will be representable in the protobuf model so that:
+Shipped today:
 
-- A run can be **serialized** for resume or audit.
-- **Replay** and debugging can operate on recorded protobuf streams.
+- `RunStore` and `RunRecorder`
+- `ClientBuilder::audit`
+- `audit::resume_chat` and `audit::resume_response`
+- `export_record_json` and `import_record_json` for metadata replay files
 
-**Shipped today:** in-memory audit (`RunStore` / `RunRecorder`), `ClientBuilder::audit`, `resume_chat`, `resume_response`, and `export_record_json` / `import_record_json` for metadata-only replay files. Full workflow orchestration remains planned.
+The store is in memory and bounded.
+Disk or an external store is a later choice. See [Security and threat model](06-security-and-threat-model.md).
 
-Persistence policy (in-memory only vs. disk vs. external store) will be a configuration matter, consistent with the security tier decisions in [Security and threat model](06-security-and-threat-model.md).
+Workflow transitions are not a runtime yet.
+When they exist, they belong in this protobuf model so a run can be serialized and replayed.
 
 ## See also
 
-- [Observability](05-observability.md) for exporting traces that span gRPC and tool calls.
-- [Roadmap and phasing](09-roadmap-and-phasing.md) for when to land gRPC relative to current state.
+- [Observability](05-observability.md)
+- [Roadmap and phasing](09-roadmap-and-phasing.md)

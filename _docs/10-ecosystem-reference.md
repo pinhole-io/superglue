@@ -1,93 +1,101 @@
 # Ecosystem reference
 
-Crates that are **in use** are marked ✅. Planned or studied crates are marked 🔲.
+A crate is listed with the Cargo feature that enables it.
+No feature means the default build.
 
 ## HTTP and streaming
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `reqwest` (rustls-tls, stream, json) | ✅ | Async HTTP client; GET + POST + streaming POST |
-| `bytes` | ✅ | Byte buffer type for streaming chunks |
-| `futures-util` | ✅ | `StreamExt` for consuming byte streams |
-| `tower` | 🔲 | Middleware abstraction; aligns with `tonic` stacks |
+| Crate | Feature | Role |
+| --- | --- | --- |
+| `reqwest` | default | Async HTTP. JSON, rustls, multipart, query, byte streams. |
+| `bytes` | default | Streaming buffers |
+| `futures-util` | default | Stream and `join_all` helpers |
+| `tower`, `tower-http`, `axum` | `gateway` | HTTP gateway and middleware |
+| `tokio-tungstenite`, `rustls`, `url` | `realtime` | Voice WebSocket |
 
-SSE parsing is implemented in-house (`src/http/sse.rs`) rather than a crate dependency, to keep the dependency footprint small and the parser fully tested.
+SSE parsing is in `src/http/sse.rs`. It is not a separate crate.
 
 ## Serialization
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `serde` + `serde_json` | ✅ | JSON tool payloads and provider JSON |
-| `prost` | ✅ | Protobuf runtime for generated types |
-| `prost-build` | ✅ | Build-time code generation from `.proto` files |
-| `protoc-bin-vendored` | ✅ | Bundles `protoc` so no system install is required |
-| `tonic` | ✅ (`grpc` feature) | gRPC on Tokio; pairs with `prost` messages |
+| Crate | Feature | Role |
+| --- | --- | --- |
+| `serde`, `serde_json` | default | Provider JSON and tool payloads |
+| `prost` | default | Protobuf runtime |
+| `prost-build`, `protoc-bin-vendored` | build | Generate Rust from `proto/superglue.proto` |
+| `tonic`, `tonic-prost`, `tokio-stream` | `grpc` | gRPC server. `tokio-stream` is also a `gateway` dependency. |
 
-## Async and control flow
+## Async and limits
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `tokio` (rt-multi-thread, macros, sync, time, io-util) | ✅ | Runtime, timers, `mpsc` channels, `spawn_blocking` |
-| `async-trait` | ✅ | `async fn` in the `Tool` trait object |
-| `tokio-util` | ✅ | `CancellationToken` for cooperative shutdown of batch and chat loops |
+| Crate | Feature | Role |
+| --- | --- | --- |
+| `tokio` | default | Runtime, timers, `mpsc`, `spawn_blocking` |
+| `async-trait` | default | `Tool` trait objects |
+| `tokio-util` | default | `CancellationToken` |
+| `governor` | default | Token bucket for QPS and downloads |
 
-## Rate limiting
+## Gateway storage and capture
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `governor` | ✅ | Token-bucket rate limiter; per-client QPS cap and throttled downloads |
+| Crate | Feature | Role |
+| --- | --- | --- |
+| `rusqlite` | `gateway` | SQLite database. Bundled SQLite. |
+| `subtle` | `gateway` | Constant-time key compare |
+| `chacha20poly1305` | `gateway` | Encrypt stored proxy API keys |
+| `rust-embed` | `gateway` | Embed the admin UI |
+| `chrono` | `gateway` | Timestamps. Also used by `mcp`. |
+| `aws-config`, `aws-sdk-s3`, `aws-smithy-async`, `flate2` | `capture` | Gzip spool and S3 upload |
 
-## Observability
+## Other optional crates
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `tracing` | ✅ | Structured spans and events throughout the core |
-| `tracing-subscriber` | ✅ | `fmt` layer with configurable scrub modes (Redact / Hash / Allow) |
-| `tracing-opentelemetry` | ✅ (`otlp` feature) | Bridge spans to OTLP exporters |
-| `opentelemetry_sdk` | ✅ (`otlp` feature) | SDK tracer provider + batch span processor |
-| `opentelemetry-otlp` | ✅ (`otlp` feature) | HTTP/protobuf OTLP span exporter |
-| `metrics` | ✅ | Metrics facade (counters + histograms for completions, tools, batches) |
-| `metrics-exporter-prometheus` | ✅ (`prometheus` feature) | Prometheus scrape endpoint |
+| Crate | Feature | Role |
+| --- | --- | --- |
+| `rmcp`, `http` | `mcp` | MCP client transports |
+| `boa_engine` | `code` | JavaScript tool mode |
+| `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`, `tracing-opentelemetry` | `otlp` | OTLP span export |
+| `metrics-exporter-prometheus` | `prometheus` | Prometheus scrape recorder |
 
-## Error handling
+## Always present
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `thiserror` | ✅ | Derives `Error` for `http::Error`, `ChatError`, `ToolInvokeError` |
+| Crate | Role |
+| --- | --- |
+| `tracing`, `tracing-subscriber` | Spans, env filter, pretty and JSON logs |
+| `metrics` | Counters and histograms. No-op recorder unless `prometheus` is on. |
+| `thiserror` | Typed errors |
+| `secrecy`, `zeroize` | API key storage |
+| `clap` | CLI |
+| `uuid` | Request ids |
+| `regex`, `base64`, `sha2` | Parsing, file bytes, image hashes |
 
-## Security utilities
-
-| Crate | Status | Role |
-|-------|--------|------|
-| `rustls` | ✅ | TLS (via `reqwest`'s `rustls-tls` feature; no OpenSSL) |
-| `zeroize` / `secrecy` | ✅ | `ChatOptions::api_key` stored as `Secret<String>`; zeroized on drop |
-| `ring` | 🔲 | Cryptographic primitives for integrity checks (not yet required) |
+`rustls` is the TLS stack through `reqwest`. The release profile enables LTO and strips symbols.
 
 ## Language bindings
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `pyo3` 0.28 | ✅ | Python extension module; `#[pyclass]`, `#[pymethods]` |
-| `maturin` | ✅ | Build and packaging tool for the Python wheel |
-| `pyo3-async-runtimes` | 🔲 | asyncio ↔ Tokio bridge (not needed for sync callback pattern) |
-| `napi-rs` | 🔲 | Node.js native addons |
+| Crate | Package | Role |
+| --- | --- | --- |
+| `pyo3` 0.29 | `superglue-py` | Python extension. `maturin` builds the wheel. |
+| `napi` 3 | `superglue-js` | Node.js addon |
+| `jni` 0.21 | `superglue-kt/native` | Android JNI |
 
-**Packaging note**: builds target CPython 3.14t (free-threaded, `Py_GIL_DISABLED`). The `dev.sh` script always points maturin at the `.venv/bin/python` interpreter to ensure the correct ABI tag (`cp314t`) is used, then installs the resulting wheel via `uv pip install` so that subsequent `uv run` invocations do not reinstall the package.
+Python wheels target CPython 3.12, 3.13, and 3.14, including free-threaded 3.14.
+`superglue-py/dev.sh` builds against `.venv/bin/python`.
 
-## Testing
+`pyo3-async-runtimes` is not a dependency. The Python binding uses `block_on` and `spawn_blocking`.
 
-| Crate | Status | Role |
-|-------|--------|------|
-| `wiremock` | ✅ | Mock HTTP server for integration tests |
-| `assert_cmd` | ✅ | Integration tests invoking compiled binaries (CLI) |
-| `predicates` | ✅ | Assertion helpers for `assert_cmd` |
+## Tests
 
-## Prior art studied
+| Crate | Role |
+| --- | --- |
+| `wiremock` | Fake provider HTTP |
+| `assert_cmd`, `predicates` | CLI tests |
+| `tempfile` | Temporary files |
+| `criterion` | Context-optimization benches |
+| `http-body-util` | Gateway body tests |
 
-- **`async-openai`**: reference for streaming patterns and OpenAI type structures.
-- **`ruff`** and **`uv`**: packaging and PyO3 layout lessons for Rust-based Python tooling.
+## Prior art
+
+- `async-openai` for streaming shapes and OpenAI types
+- `ruff` and `uv` for PyO3 packaging layout
 
 ## See also
 
-- [Roadmap and phasing](09-roadmap-and-phasing.md) for when to introduce remaining layers.
-- [Architecture](02-architecture.md) for how these pieces fit together.
+- [Architecture](02-architecture.md)
+- [Roadmap and phasing](09-roadmap-and-phasing.md)

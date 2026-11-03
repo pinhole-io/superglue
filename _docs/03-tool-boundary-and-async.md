@@ -2,13 +2,17 @@
 
 ## Contract
 
-**Implemented**: the Rust core treats tools as abstract callbacks keyed by name with **JSON arguments** and **JSON results**. The core does not parse Python type objects or Pydantic models. Each binding is responsible for:
+The core calls a tool by name.
+Arguments are JSON. Results are JSON.
+The core does not parse host objects.
 
-1. Building a **JSON Schema** that describes parameters shown to the model.
-2. Dispatching execution when the core requests a tool call, including deserialization of arguments and serialization of results to JSON.
-3. Reporting failures via `ToolInvokeError` so the core can propagate them uniformly.
+Each binding does three things:
 
-### Rust side
+1. Build a JSON Schema for the model.
+2. Run the host function and return JSON.
+3. Report failure as `ToolInvokeError`.
+
+### Rust
 
 ```rust
 #[async_trait]
@@ -16,80 +20,87 @@ pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
     async fn call(&self, arguments: Value) -> Result<Value, ToolInvokeError>;
 }
-
-pub struct ToolSpec {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters_schema: serde_json::Value,  // JSON Schema object
-}
 ```
 
-### Python side
+`ToolSpec` carries `name`, `description`, `parameters_schema`, and `static_tool`.
+Set `static_tool` when dynamic or code mode must keep the tool without routing.
+See [Context optimization](11-context-optimization.md).
+
+### Python
+
+The public helper is `Client.register_tool` in `superglue/__init__.py`.
+It reads the function name, the docstring, and the annotations.
+It then calls the PyO3 method, which only accepts a `dict` callback.
 
 ```python
-def get_weather(args: dict) -> dict:
-    return {"temp": 22, "unit": "C"}
+def get_weather(location: str, unit: str = "celsius") -> dict:
+    """Get the current weather for a city."""
+    return {"location": location, "temperature": 22, "unit": unit}
 
-client.register_tool(
-    name="get_weather",
-    description="Get current weather for a location.",
-    parameters={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
-    fn=get_weather,
-)
+client.register_tool(get_weather)
 ```
 
-The binding (`PythonDictTool`) handles `json.loads` → Python dict → `fn(args)` → `json.dumps` transparently. The Python callable receives and returns plain dicts; it never touches JSON strings.
+You can still pass `name`, `description`, `parameters`, and `static_tool`.
+A function that takes one `args: dict` needs an explicit schema.
+
+### JavaScript and Kotlin
+
+Pass an explicit JSON Schema and a callback.
+JavaScript guardrails must be synchronous. Tools may be async.
+Prefer `superglue-js/facade` for option objects and guardrail tuples.
 
 ## Async model
 
-**Implemented**: orchestration is **async end-to-end** in the core (Tokio). The Python binding bridges via `tokio::runtime::Runtime::block_on`, blocking the calling Python thread.
+The core is async on Tokio.
+The Python binding blocks the calling thread with `block_on`.
+Python tool functions are synchronous. `spawn_blocking` runs them where `Python::attach` is safe.
 
-**Tokio owns the event loop**: Python's asyncio is not involved. Tool callbacks are synchronous Python functions; they are dispatched via `tokio::task::spawn_blocking` which runs them on a dedicated OS thread where `Python::attach` (GIL management) is safe.
-
-### Why `spawn_blocking` for callbacks
-
-When `complete_with_tools` needs to call a Python tool:
-
-```
-Tokio async loop (Python main thread, blocked in block_on)
-  └── spawn_blocking → OS thread
-        └── Python::attach → calls fn(args: dict) → returns dict
-              └── sends result back to async loop via JoinHandle
+```text
+Tokio loop (Python thread blocked in block_on)
+  └── spawn_blocking
+        └── Python::attach
+              └── fn(args: dict) -> dict
 ```
 
-This avoids calling Python from within an async polling context, which would crash on free-threaded CPython (no thread state for the polling context).
+Stream tokens use an `mpsc` channel plus the same blocking thread.
+See [Architecture](02-architecture.md#python-token-delivery).
 
-### Streaming token delivery
+## Registry and dispatch
 
-The same constraint applies to streaming token callbacks. See [Architecture](02-architecture.md#token-delivery-in-streaming) for the `mpsc` channel pattern used.
+`ToolRegistry` stores `Arc<dyn Tool>` by name.
+Registration is concurrent-safe.
+One round dispatches every tool call in that round together.
+`join_all` waits for the handlers.
+The following `tool` messages follow `tool_calls` order, not finish order.
+A streaming round may start a handler when its arguments are complete. The stored messages still follow `tool_calls` order.
 
-## Tool registry
-
-`ToolRegistry` is an `Arc<RwLock<HashMap<String, Arc<dyn Tool>>>>` protected for concurrent access. Tools are registered once and dispatched many times concurrently. The registry is cloned (cheap `Arc` clone) into each `complete_with_tools` call.
-
-## Testing strategy
-
-**Implemented**: the `tools::harness` module drives the tool loop with in-memory JSON callbacks. Integration tests in `tests/chat_tool_loop_wiremock.rs` use `wiremock` to serve fake LLM responses that include tool calls, exercising the full round-trip without a live model.
-
-```rust
-// Offline harness test (no network)
-let plan = vec![
-    ToolInvocation { name: "echo".into(), arguments: json!({"x": 1}) },
-];
-let results = run_plan(&registry, plan).await;
-```
-
-## Error handling
+## Error policy
 
 `ToolInvokeError` has three variants:
 
-- `NotFound(name)` — no tool registered with that name.
-- `Handler(msg, source)` — the tool function returned an error.
-- `Serialization(msg)` — JSON encode/decode failed.
+| Variant | Meaning |
+| --- | --- |
+| `UnknownTool` | No tool has that name. |
+| `DuplicateRegistration` | The name is already registered. |
+| `HandlerFailed` | The handler returned an error. Optional `code`. |
 
-The `complete_with_tools` loop propagates `ToolInvokeError` as `ChatError::Tool`, aborting the run. Per-tool retry policy is an **open decision** for a future release.
+`OnToolError` decides what the chat loop does after `HandlerFailed`:
+
+| Policy | Behavior |
+| --- | --- |
+| `FailFast` | Abort the run. This is the default. |
+| `Skip` | Append the error as the tool result and continue. |
+| `Retry` | Retry with exponential backoff, then fail fast. |
+
+`Retry` counts extra attempts. It does not count the first call.
+The first delay is `initial_delay_ms`. Each later delay doubles.
+
+## Tests
+
+`tools::harness` runs a scripted plan with no network.
+`tests/chat_tool_loop_wiremock.rs` serves fake tool-call responses.
 
 ## See also
 
-- [Architecture](02-architecture.md) for the split between core and bindings.
-- [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md) for how tool specs appear in the proto schema.
+- [Architecture](02-architecture.md)
+- [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md)

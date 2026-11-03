@@ -31,9 +31,10 @@ virtual key with `openai:*` and `anthropic:*`. The plaintext key is shown once.
 | `/admin/users` | Users |
 | `/admin/keys` | Keys |
 | `/admin/budgets` | Budgets |
+| `/admin/profiles` | Profiles |
 | `/admin/usage` | Usage |
 | `/admin/providers` | Providers |
-| `/admin/capture` | Capture status |
+| `/admin/capture` | Capture status. The API requires the `capture` feature. |
 | `/admin/capture/records` | Capture records |
 | `/admin/capture/records/:requestId` | Capture record detail |
 | `/admin/styleguide` | Style guide |

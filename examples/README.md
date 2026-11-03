@@ -1,75 +1,87 @@
 # superglue Rust examples
 
-Numbered examples mirror [`../../superglue-py/examples/`](../../superglue-py/examples/) and [`../../superglue-js/examples/`](../../superglue-js/examples/).
+Numbered examples match [`../superglue-py/examples/`](../superglue-py/examples/) and [`../superglue-js/examples/`](../superglue-js/examples/) when that language has the same number.
 
 ## Prerequisites
 
-```bash
-# From repo root — loads OPENAI_API_KEY and OPENAI_MODEL
-source .env
+Export `OPENAI_API_KEY` before a live example.
+`OPENAI_MODEL` overrides the helper default `gpt-5.4-nano`.
+A bare model id uses OpenAI.
 
-cd projects/superglue
+From this crate:
+
+```bash
 cargo run --example 01_simple_completion
 ```
 
-Set `OPENAI_BASE_URL` for Ollama or other OpenAI-compatible hosts (`08_custom_base_url`).
+`examples/support/mod.rs` picks the base URL:
 
-## Parity table
+- A key that starts with `sk-` uses `OPENAI_BASE_URL` or `https://api.openai.com`.
+- Any other key uses `OPENAI_BASE_URL` or `http://localhost:11434`.
 
-| # | Topic | Rust example |
-|---|--------|----------------|
-| 01 | simple completion | `01_simple_completion` |
-| 02 | system prompt | `02_system_prompt` |
-| 03 | single tool | `03_single_tool` |
-| 04 | multiple tools | `04_multiple_tools` |
-| 05 | usage tracking | `05_usage_tracking` |
-| 06 | error handling | `06_error_handling` |
-| 07 | max tool rounds | `07_max_tool_rounds` |
-| 08 | custom base URL | `08_custom_base_url` |
-| 09 | concurrent completions | `09_concurrent_completions` |
-| 10 | structured data tool | `10_structured_data_tool` |
-| 11 | streaming | `11_streaming` |
-| 12 | streaming accumulate | `12_streaming_accumulate` |
-| 13 | concurrent streams | `13_streaming_multiple_requests` |
-| 14 | streaming vs buffered | `14_streaming_vs_buffered` |
-| 15 | rate limiting | `15_rate_limiting` |
-| 16 | retry configuration | `16_retry_configuration` |
-| 17 | batch completions | `17_batch_completions` |
-| 18 | hooks | `18_hooks` |
-| 19 | guardrails | `19_guardrails` |
-| 20 | agents | `20_agents` |
-| 21 | executors | **Stub** — see Python |
-| 22 | status events | `22_status_events` |
-| 23 | reasoning effort | `23_reasoning_effort` |
-| 24 | connection pool | `24_connection_pool` |
-| 25 | model fallback | `25_model_fallback` |
-| 26 | stream_response (Responses API) | `26_stream_response` |
-| 27 | response threading + tools | `27_response_threading` |
-| 28 | MCP tools (optional `MCP_RUN=1`) | `28_mcp_tools` |
-| 29 | multi-provider `provider:model` | `29_multi_provider` |
-| 30 | streaming with tool rounds | `30_streaming_tools` |
-| 31 | file upload / inline attachment | `31_file_upload` |
-| 32 | context optimization (GlueLLM) | `32_context_optimization` |
-| 33 | context optimization benchmark (wiremock) | `33_context_optimization_benchmark` |
-| 34 | context optimization benchmark (live API) | `34_context_optimization_live_benchmark` |
-| 35 | programmatic tool calling (`tool_mode=Code`) | `35_code_tool_mode` |
-| 37 | TypeSafe System One | `37_systemone` |
-| demo | quick demo | `demo` |
+Set `OPENAI_BASE_URL` yourself when you want a specific host. See `08_custom_base_url`.
 
-Run with: `cargo run --example <name>` (no `.rs` suffix).
+## Parity
+
+| # | Topic | Rust | Python | JavaScript | Kotlin test |
+| --- | --- | --- | --- | --- | --- |
+| 01 | Simple completion | yes | yes | yes | |
+| 02 | System prompt | yes | yes | yes | |
+| 03 | Single tool | yes | yes | yes | |
+| 04 | Multiple tools | yes | yes | yes | |
+| 05 | Usage tracking | yes | yes | yes | |
+| 06 | Error handling | yes | yes | yes | |
+| 07 | Max tool rounds | yes | yes | yes | |
+| 08 | Custom base URL | yes | yes | yes | |
+| 09 | Concurrent completions | yes | yes | yes | |
+| 10 | Structured data tool | yes | yes | yes | |
+| 11 | Streaming | yes | yes | yes | |
+| 12 | Streaming accumulate | yes | yes | yes | |
+| 13 | Concurrent streams | yes | yes | yes | |
+| 14 | Streaming vs buffered | yes | yes | yes | |
+| 15 | Rate limiting | yes | yes | yes | |
+| 16 | Retry configuration | yes | yes | yes | |
+| 17 | Batch completions | yes | yes | yes | |
+| 18 | Hooks | yes | yes | yes | |
+| 19 | Guardrails | yes | yes | yes | |
+| 20 | Agents | yes | yes | yes | |
+| 21 | Executors | stub | yes | stub | |
+| 22 | Status events | yes | yes | yes | `example22_status_events` |
+| 23 | Reasoning effort | yes | yes | yes | `example23_reasoning_effort` |
+| 24 | Connection pool | yes | yes | yes | `example24_connection_pool_defaults` |
+| 25 | Model fallback | yes | yes | yes | `example25_model_fallback` |
+| 26 | Stream response | yes | yes | yes | `example26_stream_response` |
+| 27 | Response threading | yes | yes | yes | `example27_complete_response` |
+| 28 | MCP tools | yes | yes | yes | |
+| 29 | Multi-provider | yes | yes | yes | `example29_multi_provider` |
+| 30 | Streaming tools | yes | yes | yes | `example30_streaming_tools` |
+| 31 | File upload | yes | yes | yes | `example31_file_upload_inline` |
+| 32 | Context optimization | yes | yes | yes | |
+| 33 | Context benchmark, wiremock | yes | | | |
+| 34 | Context benchmark, live API | yes | | | |
+| 35 | Code tool mode | yes | yes | yes | |
+| 36 | Realtime voice | yes | | | |
+| 37 | TypeSafe System One | yes | | | |
+| demo | Short demo | yes | yes | yes | |
+
+Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
+
+| Example | Extra flag or variable |
+| --- | --- |
+| `28_mcp_tools` | `--features mcp`. Set `MCP_RUN=1` for a live server. |
+| `33_context_optimization_benchmark` | No API key. Wiremock. |
+| `34_context_optimization_live_benchmark` | `OPENAI_API_KEY` and `OPENAI_MODEL` |
+| `35_code_tool_mode` | `--features code` |
+| `36_realtime_voice` | `--features realtime` and `XAI_API_KEY` |
+| `37_systemone` | `TYPESAFE_API_KEY` |
 
 ## Rust `Client`
 
-Examples use [`superglue::Client`](../../src/client/mod.rs) — a high-level wrapper over `HttpClient`, `ChatOptions`, tool/hook/guardrail registries, and `complete` / `stream` / `batch` / `run_agent`. Shared env helpers live in `examples/support/mod.rs`.
+Examples use [`superglue::Client`](../src/client/mod.rs).
+Shared helpers live in `examples/support/mod.rs`.
 
-## Example 21 (executors)
+## Example 21
 
-Executor types (`SimpleExecutor`, `AgentExecutor`, `AgentStructuredExecutor`) are Python-only. The Rust example prints a pointer to [`21_executors.py`](../../superglue-py/examples/21_executors.py).
-
-## Batch run
-
-From repo root:
-
-```bash
-./scripts/run-all-superglue-examples.sh
-```
+`SimpleExecutor`, `AgentExecutor`, and `AgentStructuredExecutor` exist only in Python.
+The Rust and JavaScript files print that fact.
+The Python script is [`../superglue-py/examples/21_executors.py`](../superglue-py/examples/21_executors.py).

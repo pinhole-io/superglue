@@ -1,12 +1,15 @@
 # Superglue monorepo
 
 | Component | Path | Role |
-|-----------|------|------|
-| **superglue** (core) | repo root | Rust library + CLI |
-| **superglue-js** | `superglue-js/` | Node.js napi-rs bindings |
-| **superglue-py** | `superglue-py/` | Python PyO3 bindings |
-| **superglue-kt** | `superglue-kt/` | Kotlin/Android JNI bindings |
+| --- | --- | --- |
+| superglue | repository root | Rust library and CLI |
+| superglue-js | `superglue-js/` | Node.js napi-rs binding |
+| superglue-py | `superglue-py/` | Python PyO3 binding |
+| superglue-kt | `superglue-kt/` | Kotlin and Android JNI binding |
+| gateway-admin | `gateway-admin/` | Admin UI embedded by the `gateway` feature |
+| deploy | `deploy/` | Gateway host scripts |
+| docs | `docs/` and `_docs/` | Provider guide and design notes |
 
-Package overview and version sync: [PACKAGES.md](PACKAGES.md).
+Version sync and publish notes: [PACKAGES.md](PACKAGES.md).
 
-In **thestack**, this repo is checked out as submodule `projects/superglue`. Loom and other consumers use `path = "../superglue"` from sibling submodules.
+When this repository is checked out as `projects/superglue`, sibling crates use `path = "../superglue"`.

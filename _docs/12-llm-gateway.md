@@ -189,7 +189,7 @@ curl -X POST http://localhost:8080/v1/responses \
   }'
 ```
 
-Supports `openai`, `xai`, and `groq` via OpenAI-compatible `/v1/responses`, and `anthropic` via Messages translation. Streaming uses `"stream": true` (SSE).
+OpenAI-compatible providers use `/v1/responses`. That set is OpenAI, xAI, Groq, OpenRouter, RunInfra, Vercel, and Amazon Bedrock. Anthropic is translated to the Messages API. TypeSafe is not a Responses provider. A proxy slug forwards the body to the registered base URL. Streaming uses `"stream": true` (SSE).
 
 ## Budget enforcement
 
@@ -199,9 +199,40 @@ Supports `openai`, `xai`, and `groq` via OpenAI-compatible `/v1/responses`, and 
 
 **v1 limitation:** there is no cost reservation. A single large request may push spend above the budget limit after the pre-check passes.
 
+## Embeddings
+
+`POST /v1/embeddings` accepts an OpenAI-shaped body.
+The model string is `provider:model`, or `provider:embedding:model` when the id must appear in an embedding catalog.
+The gateway strips the `embedding:` tag before a direct provider call.
+
+OpenAI-compatible providers use `/v1/embeddings`.
+Amazon Bedrock uses `InvokeModel`.
+Anthropic and TypeSafe do not embed.
+
+## File transcription
+
+`POST /v1/audio/transcriptions` and `POST /v1/speech/transcriptions` accept multipart audio.
+Both paths proxy to the provider `/v1/audio/transcriptions` route.
+OpenAI and Groq support this call. Other providers return 400.
+The body limit is 32 MB.
+Do not log the audio bytes or the transcript.
+
+The library helper is `audio::transcribe`.
+Its default models are `whisper-1` for OpenAI and `whisper-large-v3` for Groq.
+The same 32 MB cap applies.
+
+## Traffic capture
+
+Build with `--features capture`.
+Set `SUPERGLUE_CAPTURE_S3_BUCKET` or pass `--capture-s3-bucket` on `gateway serve`.
+The gateway writes gzip NDJSON and can upload it to S3.
+Admin routes are `GET /v1/capture/status`, `GET /v1/capture/records`, and `GET /v1/capture/records/{request_id}`.
+Host setup is in [deploy/README.md](../deploy/README.md).
+
 ## Costing
 
-Token counts are logged from provider responses. USD cost uses the static rates in [`src/costing/mod.rs`](../src/costing/mod.rs). Unknown models (most Anthropic/xAI/Groq models today) log `$0.00` cost — expand the pricing table for accurate analytics.
+USD on each usage row follows [Usage cost](#usage-cost).
+Token counts come from the provider response.
 
 ## Provider credentials
 
@@ -231,22 +262,41 @@ Allowlist patterns use `typesafe:jev-latest` or `typesafe:*`. Token usage is rec
 
 ## API reference
 
+Proxy routes accept a body up to 32 MB.
+Admin routes require the master key.
+Capture routes exist only in a `capture` build.
+
 | Method | Path | Auth | Purpose |
-|--------|------|------|---------|
+| --- | --- | --- | --- |
 | GET | `/health` | none | Liveness |
-| GET | `/health/ready` | none | Readiness (DB ping) |
-| POST | `/v1/chat/completions` | any key | Proxy completion |
-| POST | `/v1/responses` | any key | Proxy Responses API (OpenAI-shaped; multi-provider) |
-| POST | `/v1/systemone` | any key | Proxy TypeSafe System One evaluation |
-| GET | `/v1/models` | any key | List allowed models from the cache |
+| GET | `/health/ready` | none | Readiness. Pings the database. |
+| GET | `/admin/` | none | Admin UI. The browser sends the master key to the API. |
+| POST | `/v1/chat/completions` | any key | Chat completions |
+| POST | `/v1/responses` | any key | Responses API |
+| POST | `/v1/embeddings` | any key | Embeddings |
+| POST | `/v1/audio/transcriptions` | any key | File transcription |
+| POST | `/v1/speech/transcriptions` | any key | Same transcription handler |
+| POST | `/v1/systemone` | any key | TypeSafe System One |
+| GET | `/v1/models` | any key | Allowed models from the cache |
 | POST | `/v1/models/refresh` | master | Fetch upstream model lists now |
-| POST/GET | `/v1/keys` | master | Create/list virtual keys |
-| PATCH/DELETE | `/v1/keys/{id}` | master | Update/revoke keys |
-| POST/GET | `/v1/users` | master | Create/list users |
-| PATCH | `/v1/users/{id}` | master | Update user |
-| POST/GET | `/v1/budgets` | master | Create/list budgets |
-| GET | `/v1/usage` | master | Usage logs |
+| POST, GET | `/v1/keys` | master | Create or list virtual keys |
+| PATCH, DELETE | `/v1/keys/{id}` | master | Update or delete a key |
+| POST, GET | `/v1/users` | master | Create or list users |
+| PATCH, DELETE | `/v1/users/{id}` | master | Update or delete a user |
+| POST, GET | `/v1/budgets` | master | Create or list budgets |
+| PATCH, DELETE | `/v1/budgets/{id}` | master | Update or delete a budget |
+| POST, GET | `/v1/profiles` | master | Create or list profiles |
+| PATCH, DELETE | `/v1/profiles/{id}` | master | Update or delete a profile |
+| GET | `/v1/usage` | master | Usage rows |
+| GET | `/v1/usage/summary` | master | Usage summary |
 | DELETE | `/v1/usage/zero-cost` | master | Delete `$0.00` usage rows |
+| GET | `/v1/budget-resets` | master | Budget reset log |
+| GET | `/v1/providers` | master | Builtin providers |
+| POST, GET | `/v1/proxy-providers` | master | Create or list proxy providers |
+| PATCH, DELETE | `/v1/proxy-providers/{slug}` | master | Update or delete a proxy |
+| GET | `/v1/capture/status` | master | Capture status. Requires `capture`. |
+| GET | `/v1/capture/records` | master | Capture index. Requires `capture`. |
+| GET | `/v1/capture/records/{request_id}` | master | One capture record. Requires `capture`. |
 
 ## Usage cost
 

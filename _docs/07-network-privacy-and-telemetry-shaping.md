@@ -1,42 +1,55 @@
 # Network privacy and telemetry shaping
 
-## Purpose of this document
+## Status
 
-The design discussion included ideas for **obfuscating or shaping traffic** (padding, jitter, disguised endpoints, steganography, domain fronting). This page records those themes for completeness and separates them from **core product requirements**.
+The techniques on this page are not implemented.
+They are not a shipping checklist.
+The default path uses documented provider endpoints, TLS, and scrubbed logs.
 
-**Important**: several techniques can violate **terms of service** for CDNs or providers, create **compliance** problems, or harm **user trust** if used without disclosure. Treat this material as **engineering background and ethics-sensitive**, not a shipping checklist.
+## Warning
 
-## TLS is necessary but not sufficient
+Padding, disguised endpoints, domain fronting, and steganography can break a provider terms of service.
+They can also create compliance and trust problems.
+Treat this page as background.
 
-TLS hides payload contents from passive observers on the wire in typical configurations. Metadata often remains visible:
+## TLS
 
-- That a connection occurred.
-- Rough timing and size patterns.
-- Destination identities unless additional measures apply.
+TLS hides typical payload bytes from a passive observer on the path.
+These facts can still be visible:
 
-## Application-layer payload shaping (exploratory)
+- A connection happened.
+- Timing and size patterns.
+- The destination name, unless you add another control.
 
-Ideas mentioned in discussion:
+## Payload shaping
 
-- **Encrypt-then-pad** payloads to fixed block sizes so message length does not reveal operation type.
-- **Randomized intervals** with jitter instead of perfectly periodic heartbeats to reduce fingerprinting.
+Ideas from early design discussion:
 
-If implemented, these belong next to explicit **privacy policies** and **user consent** where applicable.
+- Pad ciphertext to a fixed size so length does not reveal the operation.
+- Add jitter to heartbeats so the interval is not constant.
 
-## Destination hiding (high risk)
+If you build either one, pair it with a written privacy policy and user consent.
 
-**Domain fronting** and similar tricks can make traffic resemble benign destinations. Many CDNs prohibit this; legal and policy review is mandatory before any experiment.
+## Destination hiding
 
-**DNS over HTTPS** and rotating endpoints may improve privacy against local DNS observers; they do not replace TLS or application redaction.
+Domain fronting can make traffic look like another site.
+Many CDNs prohibit it. Get a legal and policy review before any experiment.
 
-## Traffic mimicry and steganography (research)
+DNS over HTTPS and rotating endpoints hide queries from a local DNS observer.
+They do not replace TLS or application redaction.
 
-Embedding control signals in images or mimicking browser telemetry patterns is **interesting for learning** and **dangerous to ship casually**. It can violate norms, policies, and laws depending on jurisdiction and deployment.
+## Mimicry
 
-## Relationship to core design
+Hiding control data in images, or copying browser telemetry, is a research topic.
+It can violate policy and law. Do not add it to a default build.
 
-The **default** architecture should assume **honest, documented endpoints**, **mTLS where needed**, and **scrubbed observability** (see [Observability](05-observability.md)). Optional shaping belongs behind explicit build-time or runtime flags with governance review.
+## Default architecture
+
+Use the documented endpoint.
+Use mTLS when the peer must be authenticated.
+Scrub observability. See [Observability](05-observability.md).
+Any shaping feature needs an explicit flag and a review.
 
 ## See also
 
-- [Security and threat model](06-security-and-threat-model.md) for tiered assurance and honest limits.
+- [Security and threat model](06-security-and-threat-model.md)

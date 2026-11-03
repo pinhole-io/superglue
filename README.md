@@ -234,12 +234,15 @@ Each tool can use `FailFast`, `Skip`, or `Retry`. One round can dispatch several
 | Streaming | SSE `stream`. With tools registered, the stream runs the same multi-round loop. |
 | Tool loop | JSON tools, parallel dispatch in a round, per-tool error policy |
 | Providers | `provider:model` routing. See [Model providers](#model-providers). |
-| Embeddings | `Client::embed` and gateway `POST /v1/embeddings` for OpenAI-compatible providers |
+| Embeddings | `Client::embed` and gateway `POST /v1/embeddings`. Bedrock uses `InvokeModel`. |
 | Reliability | Retries, per-key rate limits, model fallback, cooperative cancel |
 | Agents | Personas, hooks, guardrails, status events, usage, and cost |
 | Context control | Dynamic tool routing, round condensing, and optional code-mode tools (`code` feature) |
 | Files | Inline bytes or a provider file upload. Default inline cap is 20 MB. |
+| Conversations | `Client::conversation` keeps turns. Rust `push_user_message` accepts file and image parts. |
 | Voice | Duplex sessions on xAI when you enable `realtime` |
+| System One | TypeSafe checks through `Client::system_one` and gateway `POST /v1/systemone` |
+| Transcription | OpenAI and Groq file transcription. Gateway paths are under `/v1/audio` and `/v1/speech`. |
 | Observability | `tracing` with redaction. Optional OTLP and Prometheus. |
 | Servers | gRPC sidecar (`grpc`) and an OpenAI-compatible HTTP gateway (`gateway`) |
 | Bindings | Python (PyO3), Node.js (napi-rs), Kotlin (JNI) |
@@ -247,7 +250,7 @@ Each tool can use `FailFast`, `Skip`, or `Retry`. One round can dispatch several
 ## How it fits together
 
 ```text
-Python / JavaScript / Kotlin / CLI
+Python / JavaScript / Kotlin / Rust / CLI
             │  JSON tools, native callbacks
             ▼
      SuperGlue (Rust, Tokio)
@@ -377,8 +380,10 @@ cargo run --example 36_realtime_voice --features realtime
 | Fallback and several providers | `25_model_fallback`, `29_multi_provider` |
 | Files | `31_file_upload` |
 | Smaller tool context | `32_context_optimization`, `35_code_tool_mode` |
+| Context benchmarks | `33_context_optimization_benchmark`, `34_context_optimization_live_benchmark` |
 | MCP tools | `28_mcp_tools` |
 | Voice | `36_realtime_voice` |
+| TypeSafe System One | `37_systemone` |
 
 The full parity table is in [examples/README.md](examples/README.md).
 
@@ -393,7 +398,8 @@ The full parity table is in [examples/README.md](examples/README.md).
 | Code-mode example fails to compile | Pass `--features code`. |
 | Python cannot import `superglue` | Run `./dev.sh` inside `superglue-py` after `uv venv --python 3.14t`. |
 | Node `Cannot find module` | Run `npm run build` in `superglue-js`. The facade import also needs `npm run build:ts`. |
-| A secret appears in a log | Keep the default scrub mode `redact`. Use `--scrub-mode allow` only on a local machine. |
+| A secret appears in a log | Keep the default scrub mode `redact`. `--scrub-mode allow` prints sensitive log fields. Use it only on a local machine. OpenInference still redacts tool-call arguments and `tool` role text. |
+| Port 9090 is open | You built with `prometheus`. `init_metrics` listens on `0.0.0.0:9090/metrics`. Use a firewall, or serve metrics from your own process with `install_recorder`. |
 | Gateway admin page is empty | Build [gateway-admin](gateway-admin/README.md), then rebuild the `gateway` feature. The binary embeds `dist/`. |
 
 ## Development
@@ -417,9 +423,9 @@ After you change `[workspace.package].version`:
 ./scripts/check-superglue-version-parity.sh
 ```
 
-Publish that version with a GitHub Release tagged `v` plus the workspace version. Steps and secrets: [PACKAGES.md](PACKAGES.md).
+Tag the release `v` plus the workspace version. Registry upload is described in [PACKAGES.md](PACKAGES.md). The publish workflows are not in this repository yet.
 
-In [thestack](https://github.com/Bioto/thestack), this repository is the `projects/superglue` submodule. Layout notes: [MONOREPO.md](MONOREPO.md).
+Layout notes: [MONOREPO.md](MONOREPO.md).
 
 ## License
 

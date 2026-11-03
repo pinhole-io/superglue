@@ -1,63 +1,63 @@
 # Superglue design documentation
 
-This directory holds **maintainer-facing design notes** for the `superglue` polyglot LLM orchestration core. The Rust crate lives at [`../`](../); the Python binding lives at [`../../superglue-py/`](../../superglue-py/).
+These notes describe intent, tradeoffs, and the current implementation.
+The Rust crate is the parent directory.
+Bindings live in `superglue-py/`, `superglue-js/`, and `superglue-kt/`.
 
-These documents describe **intent, tradeoffs, and current implementation status**. They are versioned with the repo and updated as decisions change.
+The public guide starts at [`../README.md`](../README.md).
+Provider routing is in [`../docs/multi-provider.md`](../docs/multi-provider.md).
 
 ## Reading order
 
-1. [Vision and principles](01-vision-and-principles.md) — goals, constraints, non-goals.
-2. [Architecture](02-architecture.md) — what runs in the Rust core versus language bindings.
-3. [Tool boundary and async](03-tool-boundary-and-async.md) — JSON tool payloads, Tokio ownership, bridging async hosts.
-4. [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md) — internal schema, RPC surface, deployment modes.
-5. [Observability](05-observability.md) — tracing, metrics, and safe export of telemetry.
-6. [Security and threat model](06-security-and-threat-model.md) — tiered posture from commercial packaging to high-assurance patterns.
-7. [Network privacy and telemetry shaping](07-network-privacy-and-telemetry-shaping.md) — optional traffic-shaping ideas; legal and ethical caveats.
-8. [Operations: throttled downloads](08-operations-throttled-downloads.md) — rate-limited artifact fetch.
-9. [Roadmap and phasing](09-roadmap-and-phasing.md) — incremental delivery plan with current status.
-10. [Ecosystem reference](10-ecosystem-reference.md) — Rust crates in use and prior art.
-11. [LLM Gateway](12-llm-gateway.md) — HTTP proxy with keys, budgets, and usage tracking (`gateway` feature).
+1. [Vision and principles](01-vision-and-principles.md)
+2. [Architecture](02-architecture.md)
+3. [Tool boundary and async](03-tool-boundary-and-async.md)
+4. [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md)
+5. [Observability](05-observability.md)
+6. [Security and threat model](06-security-and-threat-model.md)
+7. [Network privacy and telemetry shaping](07-network-privacy-and-telemetry-shaping.md)
+8. [Operations: throttled downloads](08-operations-throttled-downloads.md)
+9. [Roadmap and phasing](09-roadmap-and-phasing.md)
+10. [Ecosystem reference](10-ecosystem-reference.md)
+11. [Context optimization](11-context-optimization.md)
+12. [LLM gateway](12-llm-gateway.md)
 
 ## Current implementation status
 
 | Component | Status |
-|-----------|--------|
-| HTTP client (`reqwest`, rustls-tls) | ✅ shipped |
-| Retry policy (GET + POST with distinct rules) | ✅ shipped |
-| Rate limiting (`governor` token bucket) | ✅ shipped |
-| SSE parser (`SseParser`) | ✅ shipped |
-| Tool registry + `Tool` trait | ✅ shipped |
-| Tool harness (offline scripted plans) | ✅ shipped |
-| OpenAI chat types (full spec) | ✅ shipped |
-| Chat completion tool loop (`complete_with_tools`) | ✅ shipped |
-| Parallel tool dispatch within a round | ✅ shipped |
-| Streaming completions (`stream_complete`, SSE) | ✅ shipped |
-| Protobuf schema (`prost`, `proto/superglue.proto`) | ✅ shipped |
-| Python binding (`superglue-py`, PyO3, CPython 3.14t) | ✅ shipped |
-| Python `Client.complete()` with tool callbacks | ✅ shipped |
-| Python `Client.stream()` with token callback | ✅ shipped (GIL-free 3.14t) |
-| Per-tool error policies (FailFast / Skip / Retry) | ✅ shipped |
-| Cooperative cancellation (`CancellationToken`) | ✅ shipped |
-| Throttled downloads (`governor` bandwidth limiter) | ✅ shipped |
-| API key zeroization (`secrecy` + `zeroize`) | ✅ shipped |
-| Observability — tracing scrub layer + metrics facade | ✅ shipped |
-| Observability — OTLP export (`otlp` feature) | ✅ shipped |
-| Observability — configurable scrub modes (Redact/Hash/Allow) | ✅ shipped |
-| Audit trail (`RunStore` + `RunRecorder`) | ✅ shipped |
-| Process events (`StatusEmitter` + cost estimation) | ✅ shipped |
-| gRPC server (`tonic`, `grpc` feature) | ✅ shipped |
-| LLM gateway (`axum`, `gateway` feature) | ✅ shipped |
-| OpenAI-compatible embeddings (Rust + gateway) | ✅ shipped |
-| Node.js binding (`napi-rs`) | ✅ shipped |
-| Proto-generated language client stubs | ✅ shipped (`scripts/generate-proto-clients.sh`) |
-| Replay / run-resume from audit trail | ✅ shipped (`audit::resume_chat`, `audit::resume_response`) |
-| Workflow engine | 🔲 planned |
+| --- | --- |
+| HTTP client, retries, rate limits, SSE parser | Shipped |
+| Tool registry, parallel dispatch, per-tool error policy | Shipped |
+| Chat completions and the Responses API | Shipped |
+| Streaming, including tool rounds | Shipped |
+| `Client` and `ClientConversation` | Shipped |
+| Embeddings | Shipped |
+| File attachments and image parts | Shipped |
+| File transcription (`audio`) | Shipped for OpenAI and Groq |
+| Batch, hooks, guardrails, agents | Shipped |
+| Model fallback and `provider:model` routing | Shipped |
+| Context optimization and code mode (`code` feature) | Shipped |
+| MCP tools (`mcp` feature) | Shipped |
+| Realtime voice (`realtime` feature, xAI adapter) | Shipped |
+| Protobuf schema and gRPC server (`grpc` feature) | Shipped |
+| Audit records and resume helpers | Shipped |
+| Tracing scrub, OTLP (`otlp`), Prometheus (`prometheus`) | Shipped |
+| LLM gateway (`gateway` feature) | Shipped |
+| Gateway traffic capture (`capture` feature) | Shipped |
+| Python, Node.js, and Kotlin bindings | Shipped |
+| Workflow engine | Planned |
+| OpenAI Realtime adapter | Planned |
+| Traffic shaping from [note 07](07-network-privacy-and-telemetry-shaping.md) | Not a product requirement |
 
 ## Related code
 
 | Area | Location |
-|------|----------|
-| Rust core | [`../`](../) |
-| Python binding | [`../../superglue-py/`](../../superglue-py/) |
-| Python examples | [`../../superglue-py/examples/`](../../superglue-py/examples/) |
-| Python GlueLLM (behavioral reference) | [`../../gluellm/`](../../gluellm/) |
+| --- | --- |
+| Rust core | [`../src`](../src) |
+| Protobuf schema | [`../proto/superglue.proto`](../proto/superglue.proto) |
+| Python binding | [`../superglue-py`](../superglue-py) |
+| Node.js binding | [`../superglue-js`](../superglue-js) |
+| Kotlin binding | [`../superglue-kt`](../superglue-kt) |
+| Examples | [`../examples/README.md`](../examples/README.md) |
+| Gateway admin UI | [`../gateway-admin/README.md`](../gateway-admin/README.md) |
+| Gateway host deploy | [`../deploy/README.md`](../deploy/README.md) |

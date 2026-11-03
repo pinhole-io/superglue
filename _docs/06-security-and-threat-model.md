@@ -1,58 +1,81 @@
 # Security and threat model
 
-This document tiers expectations. **Not every product needs the strongest tier**; mixing “research” ideas into default requirements creates confusion.
+This note tiers expectations.
+A stronger tier is not the default product requirement.
+
+## What the code does today
+
+- The license is MIT. The source ships with the binary.
+- The release profile enables LTO and strips symbols.
+- Provider API keys use `secrecy::SecretString` and `zeroize` on drop.
+- Logs default to `ScrubMode::Redact`. See [Observability](05-observability.md).
+- Gateway virtual keys are stored as SHA-256 hashes. Compare uses a constant-time check.
+- A proxy provider API key is encrypted with the gateway master key.
+- TLS for provider calls is rustls through `reqwest`.
+
+## Warning
+
+A prompt that you send to a model provider leaves this process.
+Memory hardening does not cover that hop.
+The `prometheus` feature listens on `0.0.0.0:9090/metrics` when `init_metrics` runs.
+Do not expose that port on a public host.
 
 ## Tier A: Normal commercial packaging
 
-Typical goals: protect proprietary orchestration logic, ship updates safely, use standard transport security.
+Typical goals: ship updates safely and use standard transport security.
 
-- Ship the core as a **binary** or managed service; expose a **documented wire protocol** (for example gRPC with protobuf) rather than source.
-- Use **TLS** for all remote traffic; prefer **mTLS** between clients and a local daemon when authentication matters.
-- **Strip symbols** and enable **LTO** in release builds; keep dependency inventories (`cargo auditable` or SBOM processes) for supply-chain review.
-- **License checks** (signed keys, online entitlement) belong here as product decisions, not as Rust language features.
+- Prefer a documented wire protocol, such as gRPC with protobuf, when the caller is another process.
+- Use TLS for remote traffic. Prefer mTLS when the peer must be authenticated.
+- Keep a dependency inventory (`cargo auditable` or an SBOM) for supply-chain review.
+- License servers and entitlement checks are product choices. They are not part of this crate.
 
 ## Tier B: Strong local confidentiality
 
-Goals: reduce persistence of sensitive prompts and tool outputs; limit exposure from crash dumps and swap.
+Goals: keep prompts and tool output out of disk, crash dumps, and casual logs.
 
-- Prefer **in-memory** workflow state where policy allows; avoid writing secrets to disk.
-- Use **`zeroize`** on sensitive buffers and consider the **`secrecy`** pattern for key material.
-- Optional **`mlock`** on particularly sensitive pages reduces swap risk but does not defeat all attacks.
-- **gRPC with rustls**, short-lived certificates, and tight cipher configuration for any remote control plane traffic.
+- Keep workflow and audit state in memory when policy allows it. `RunStore` is in memory today.
+- `zeroize` and `secrecy` cover API keys. Apply the same pattern to any new secret buffer.
+- `mlock` can reduce swap risk for a specific page. It does not stop every attack.
+- Use rustls and short-lived certificates for a remote control plane.
 
-**Honest ceiling**: data sent to external LLM APIs **leaves the trust boundary**. Tooling must treat provider calls and logging as primary exfiltration risks. Memory hardening does not fix network egress or careless logs.
+Data sent to an external model API leaves the trust boundary.
+Treat provider calls and logs as the main exfiltration paths.
 
-## Tier C: Research and adversarial topics
+## Tier C: Research topics
 
-These items appeared in brainstorming (self-destruct flows, binary overwrite, remote heartbeats). Treat them as **exploratory** unless a product explicitly adopts them.
+Self-destruct flows, binary overwrite, and remote heartbeats are exploratory.
+They are not implemented.
 
-### Self-destruct and tamper response
+### Tamper response
 
-Concepts include: overwrite executable bytes before deletion, zero sensitive state, abort on integrity failure, or react to remote “destruct” signals.
+Ideas include overwriting the executable, zeroing state, or aborting on an integrity failure.
 
-**Platform reality**: deleting or overwriting the **currently running executable** fails on some operating systems (notably Windows file locking). Any design must account for OS-specific launchers or delayed cleanup.
+Some operating systems lock the running executable. A design must use a launcher or delayed cleanup.
+A copied binary remains usable after local deletion.
 
-**Copy problem**: if an attacker copies the binary before a trigger, local deletion does not revoke that copy. Remote attestation or encrypted loaders shift the threat model but add operational cost.
+### Encrypted loader
 
-### Encrypted loader model
+Encryption at rest, with a key delivered after authentication, is a distribution design.
+It needs key management. It is not a language feature of this crate.
 
-At-rest binary encryption with keys delivered only after authentication can reduce casual copying. This is a **distribution architecture**, not a Rust language feature, and implies robust key management and availability tradeoffs.
+## Observability as a leak
 
-## Observability as a leak vector
+The usual leaks are:
 
-The largest practical leaks are often:
+- Provider API traffic
+- Tool output that contains secrets
+- Traces that store full prompts
 
-- **LLM API traffic** to third parties.
-- **Tool outputs** containing secrets.
-- **Tracing and logging** capturing full prompts or results.
+Tool arguments and `tool` role text stay redacted on LLM spans in every scrub mode.
+`Allow` still writes other message text. See [Observability](05-observability.md).
 
-Cross-reference [Observability](05-observability.md): redaction is mandatory for serious deployments.
+## Limits of userspace
 
-## What “leave no trace” cannot promise in userspace
-
-A determined attacker with **kernel or hypervisor access**, **physical memory access**, or **full disk forensics** may recover data despite zeroization. Claims should stay proportional to the threat model.
+A caller with kernel access, hypervisor access, or a disk image can recover data after zeroization.
+State claims at the tier you actually implement.
 
 ## See also
 
-- [Network privacy and telemetry shaping](07-network-privacy-and-telemetry-shaping.md) for optional network-layer topics.
-- [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md) for secure transport between clients and core.
+- [Network privacy and telemetry shaping](07-network-privacy-and-telemetry-shaping.md)
+- [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md)
+- [LLM gateway](12-llm-gateway.md)

@@ -5,7 +5,7 @@ alwaysApply: true
 
 # superglue-js
 
-Node.js binding at `projects/superglue-js/` via **napi-rs** native addon + optional TS facade.
+Node.js binding at `projects/superglue/superglue-js/` via **napi-rs** native addon + optional TS facade.
 
 ## Build
 
@@ -15,7 +15,7 @@ npm run build:native    # or build:native:debug
 npm run build:ts
 ```
 
-Rebuild native addon after **every** Rust core change in `../superglue`.
+Rebuild the native addon after every change in the parent Rust crate.
 
 ## Tools (critical difference from Python)
 
@@ -29,8 +29,8 @@ Rebuild native addon after **every** Rust core change in `../superglue`.
 
 ## Examples parity
 
-- Numbered `examples/` match [`superglue-py/examples`](../superglue-py/examples) topics.
-- CI: monorepo [`.github/workflows/superglue-js.yml`](../../.github/workflows/superglue-js.yml) (paths under `projects/`).
+- Numbered `examples/` match [`superglue-py/examples`](../../../superglue-py/examples) topics.
+- CI: [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml) job `superglue-js`.
 
 ## Node version
 

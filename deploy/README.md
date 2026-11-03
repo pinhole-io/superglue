@@ -73,6 +73,9 @@ superglue gateway --url "$SUPERGLUE_GATEWAY_URL" user list
 
 ## Create a virtual key
 
+The create-user body accepts `user_id`, `alias`, and `profile_id`.
+Put the budget on the profile. The user copies that budget.
+
 ```bash
 source ~/.superglue/gateway.env
 
@@ -82,19 +85,26 @@ BUDGET=$(curl -sS -X POST "${SUPERGLUE_GATEWAY_URL}/v1/budgets" \
   -d '{"max_budget": 50.0, "duration_sec": 2592000, "enforce": true}')
 echo "${BUDGET}"
 
-# Use budget_id from the response, then:
+# Use budget_id from the response.
+curl -sS -X POST "${SUPERGLUE_GATEWAY_URL}/v1/profiles" \
+  -H "X-Superglue-Key: Bearer ${GATEWAY_MASTER_KEY}" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"default","allowed_models":["openai:*","anthropic:*"],"budget_id":"<budget-id>"}'
+
+# Use profile id from the response.
 curl -sS -X POST "${SUPERGLUE_GATEWAY_URL}/v1/users" \
   -H "X-Superglue-Key: Bearer ${GATEWAY_MASTER_KEY}" \
   -H 'Content-Type: application/json' \
-  -d '{"user_id": "me", "alias": "Me", "budget_id": "<budget-id>"}'
+  -d '{"user_id": "me", "alias": "Me", "profile_id": "<profile-id>"}'
 
 curl -sS -X POST "${SUPERGLUE_GATEWAY_URL}/v1/keys" \
   -H "X-Superglue-Key: Bearer ${GATEWAY_MASTER_KEY}" \
   -H 'Content-Type: application/json' \
-  -d '{"name": "default", "user_id": "me", "allowed_models": ["openai:*", "anthropic:*"]}'
+  -d '{"name": "default", "user_id": "me"}'
 ```
 
-Store the returned plaintext key; it is shown once.
+Omit `allowed_models` on the key to copy the profile allowlist.
+Store the returned plaintext key. It is shown once.
 
 ## Env overrides
 

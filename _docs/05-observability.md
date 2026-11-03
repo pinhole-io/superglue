@@ -1,44 +1,96 @@
 # Observability
 
-## Goals
+## Warning
 
-Provide **one implementation** of instrumentation inside the Rust core so that latency, token usage, retries, tool invocations, and workflow steps are measured consistently. Language bindings should **adapt** signals to host-native logging and tracing systems, not reimplement metrics.
+Traces and logs can leak prompts, tool output, and secrets.
+The default scrub mode is `Redact`.
+Use `Allow` only on a machine you control.
 
-## Decided direction
+A build with the `prometheus` feature listens on `0.0.0.0:9090/metrics` when `init_metrics` runs.
+The CLI calls `init_metrics` at startup.
+Put a firewall in front of that port, or use `install_recorder` and serve `/metrics` on your own route.
 
-- **Tracing**: use the `tracing` ecosystem with async-aware spans around LLM requests, stream chunks, tool calls, retries, and workflow transitions.
-- **Process events**: optional [`StatusEmitter`](../src/events/mod.rs) fan-out emits typed `ProcessEvent` records (`llm_call_start`, `llm_call_end`, `llm_call_error`, `tool_call_*`) with token usage and estimated USD cost. Opt-in via `ChatOptions.status_emitter` or Python `Client(status_emitter=...)`.
-- **Hooks vs events**: hooks may mutate pipeline content; status events are observation-only.
-- **Export**: support OpenTelemetry via `tracing-opentelemetry` so spans can reach OTLP collectors. Enable the `otlp` feature and set `TelemetryConfig::otlp_endpoint`.
-- **Span meaning**: exported spans use [OpenInference](https://github.com/Arize-ai/openinference/blob/main/spec/semantic_conventions.md) names.
-  - `openinference.span.kind` is `AGENT`, `CHAIN`, `LLM`, `TOOL`, or `GUARDRAIL`.
-  - An LLM span carries `llm.model_name`, `llm.provider`, `llm.system`, `llm.invocation_parameters`, flattened `llm.input_messages` / `llm.output_messages`, and `llm.token_count.*`.
-  - A tool span carries `tool.name`, `tool.id`, `input.value`, and `output.value`.
-  - An agent span carries stable `agent.id` and `agent.name` from `AgentSpec::name`, plus `session.id`.
-  - `session.id` is `ChatOptions.request_id`. Set that id on the caller when one conversation should stay together.
-- **Metrics**: use a metrics facade (for example the `metrics` crate family) for counters and histograms such as request duration, queue depth, and retry counts.
+## What is shipped
 
-## Redaction and scrubbing
+| Piece | Where |
+| --- | --- |
+| `tracing` spans | Core request, stream, tool, and retry paths |
+| `init_tracing` | Pretty or JSON logs, `RUST_LOG`, scrub mode |
+| `ScrubMode` | `Redact` (default), `Hash`, `Allow` |
+| OpenInference attributes | `otlp` feature, `telemetry::openinference` |
+| `StatusEmitter` | Opt-in `ProcessEvent` fan-out |
+| `metrics` facade | Counters and histograms in `telemetry::metrics` |
+| OTLP export | `otlp` feature and `TelemetryConfig::otlp_endpoint` |
+| Prometheus | `prometheus` feature |
 
-**Design constraint (not optional at ship time)**: raw prompts, tool arguments, tool outputs, and provider responses may contain secrets or PII. Before any log line, trace attribute, or metric label is exported, data must pass through a **scrubbing or redaction layer**.
+Hooks can change pipeline content.
+Status events are observation only.
+Attach an emitter with `ChatOptions.status_emitter` or the matching client option.
 
-Policies should include:
+## OpenInference spans
 
-- Default **deny** for full payloads in spans and logs. `ScrubMode::Redact` writes `[REDACTED]` into OpenInference message, tool-argument, and tool-result attributes. `ScrubMode::Allow` writes the text. `data:` URLs stay `[data-uri]` in every mode.
-- Opt-in **sampled** or **hashed** representations for debugging sessions.
-- Explicit lists of **safe** attributes (for example provider name, model id, HTTP status class) versus **unsafe** fields that must never attach to OTLP without transformation.
+Exported spans use the [OpenInference](https://github.com/Arize-ai/openinference/blob/main/spec/semantic_conventions.md) names.
+`openinference.span.kind` is `AGENT`, `CHAIN`, `LLM`, `TOOL`, or `GUARDRAIL`.
 
-Bindings that add host-side logging must follow the same rules so that Python or Node cannot accidentally bypass core policy.
+| Span | Attributes |
+| --- | --- |
+| LLM | `llm.model_name`, `llm.provider`, `llm.system`, `llm.invocation_parameters`, flattened input and output messages, `llm.token_count.*` |
+| Tool | `tool.name`, `tool.id`, and `session.id` |
+| Agent | `agent.id` and `agent.name` from `AgentSpec::name`, plus `session.id` |
+| Guardrail | Stage metadata, plus input and output text |
+
+`session.id` is `ChatOptions.request_id`.
+Set that id when one conversation must stay together.
+An agent run creates a request id when the caller did not set one.
+
+## Scrub rules
+
+These rules apply to OpenInference attributes:
+
+- Message text follows `ScrubMode`. `Redact` writes `[REDACTED]`. `Hash` writes a hash. `Allow` writes the text.
+- A `tool` role message stays `[REDACTED]` in every mode.
+- `function.arguments` on a tool call stays `[REDACTED]` in every mode.
+- A `data:` URL stays `[data-uri]` in every mode.
+- Each string attribute is cut at 16_384 characters.
+- Roles, tool names, model ids, and token counts stay visible.
+
+`set_input_text` and `set_output_text` follow `ScrubMode`.
+Those helpers record the user text and the final reply. They do not record tool arguments.
+
+Log fields named `api_key`, `authorization`, `content`, `arguments`, `result`, `prompt`, and `system_prompt` follow `ScrubMode`.
+`Allow` prints those fields. `Redact` and `Hash` do not.
+
+CLI flag: `--scrub-mode redact|hash|allow`.
+An unknown value falls back to `redact` and logs a warning.
+
+## Metrics
+
+Names live in `src/telemetry/metrics.rs`.
+
+| Name | Kind |
+| --- | --- |
+| `superglue.completions.total` | Counter. Label `model`. |
+| `superglue.completions.errors` | Counter. Labels `model`, `error_kind`. |
+| `superglue.tool_calls.total` | Counter. Label `tool_name`. |
+| `superglue.tool_calls.errors` | Counter. Labels `tool_name`, `error_kind`. |
+| `superglue.completion.duration_ms` | Histogram. Label `model`. |
+| `superglue.stream.duration_ms` | Histogram. Label `model`. |
+| `superglue.batch.size` | Histogram |
+| `superglue.batch.duration_ms` | Histogram |
+| `superglue.http.retries.total` | Counter |
+| `superglue.system_one.total` | Counter. Label `model`. |
+| `superglue.system_one.errors` | Counter. Labels `model`, `error_kind`. |
+| `superglue.system_one.duration_ms` | Histogram. Label `model`. |
+
+Without `prometheus`, `init_metrics` installs a no-op recorder so the macros do not panic.
 
 ## Errors
 
-Structured error types should preserve **context chains** (provider error, parse error, tool error) in Rust. Bindings map these to native error types while preserving stable **error codes** where feasible for programmatic handling.
-
-## Relation to security posture
-
-Telemetry is a **major leak vector** for sensitive data. See [Security and threat model](06-security-and-threat-model.md) for alignment with “leave no trace” requirements when that tier applies.
+Rust errors use `thiserror` and keep the source chain.
+Bindings map those types to host errors.
 
 ## See also
 
-- [Architecture](02-architecture.md) for what runs inside the core versus bindings.
-- [Network privacy and telemetry shaping](07-network-privacy-and-telemetry-shaping.md) for optional traffic-level considerations separate from application-level redaction.
+- [Security and threat model](06-security-and-threat-model.md)
+- [Architecture](02-architecture.md)
+- [Network privacy and telemetry shaping](07-network-privacy-and-telemetry-shaping.md)

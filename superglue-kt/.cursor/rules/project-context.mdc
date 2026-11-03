@@ -5,11 +5,11 @@ alwaysApply: true
 
 # superglue-kt
 
-Rust JNI + Android library at `projects/superglue-kt/`. Primary consumer: [`projects/butler`](../butler).
+Rust JNI + Android library at `projects/superglue/superglue-kt/`. Butler is a separate Android app that can depend on `:superglue-android`.
 
 ## API contract
 
-Follow [`superglue-js/index.d.ts`](../superglue-js/index.d.ts) — Kotlin/Java surface mirrors Node binding semantics.
+Follow [`superglue-js/index.d.ts`](../../../superglue-js/index.d.ts). The Kotlin and Java surface mirrors the Node binding.
 
 ## Build
 
@@ -31,4 +31,4 @@ Follow [`superglue-js/index.d.ts`](../superglue-js/index.d.ts) — Kotlin/Java s
 
 ## Gradle integration
 
-Butler includes `:superglue-android` via `settings.gradle.kts` — path changes in monorepo layout must update both repos.
+If Butler includes `:superglue-android`, update Butler `settings.gradle.kts` when this module path changes.

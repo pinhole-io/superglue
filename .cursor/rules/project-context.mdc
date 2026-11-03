@@ -9,41 +9,51 @@ Rust orchestration core at `projects/superglue/`. **All orchestration logic live
 
 ## Design docs (read in order)
 
-Start at [`_docs/README.md`](_docs/README.md):
+Start at [`_docs/README.md`](../../_docs/README.md):
 
-1. Vision → Architecture → Tool boundary & async
+1. Vision → Architecture → Tool boundary and async
 2. Protobuf/gRPC → Observability → Security
-3. Roadmap → Ecosystem reference
+3. Roadmap → Ecosystem reference → Context optimization → LLM gateway
+
+Provider routing: [`docs/multi-provider.md`](../../docs/multi-provider.md).
 
 ## Binding parity
 
 API or tool-boundary changes require updates in:
 
-- [`superglue-py`](../superglue-py)
-- [`superglue-js`](../superglue-js)
-- [`superglue-kt`](../superglue-kt)
+- `superglue-py/`
+- `superglue-js/`
+- `superglue-kt/`
 
 ## Tool boundary
 
-- JSON payloads across FFI — no opaque Python objects in the Rust core loop.
-- JS: explicit JSON Schema per tool. Python: introspection at binding layer only.
+- JSON payloads across FFI. No opaque Python objects in the Rust core loop.
+- JS and Kotlin: explicit JSON Schema per tool.
+- Python: introspection in `superglue/__init__.py` only. The PyO3 method receives a dict callback.
+- One round runs tool handlers concurrently. Tool messages follow `tool_calls` order.
+- Per-tool policy is `FailFast`, `Skip`, or `Retry`.
 
 ## Feature flags (`Cargo.toml`)
 
 | Feature | Purpose |
-|---------|---------|
-| `grpc` | gRPC server/client |
+| --- | --- |
+| `grpc` | gRPC server |
 | `otlp` | OpenTelemetry export with OpenInference span attributes |
-| `prometheus` | Metrics endpoint |
-| `realtime` | Provider-agnostic realtime voice sessions (xAI WebSocket first) |
+| `prometheus` | Metrics recorder. `init_metrics` listens on `0.0.0.0:9090/metrics`. |
+| `mcp` | MCP tool clients |
+| `gateway` | OpenAI-compatible HTTP gateway |
+| `capture` | Gateway traffic capture. Requires `gateway`. |
+| `code` | Programmatic JavaScript tool mode |
+| `realtime` | Realtime voice sessions. The first adapter is xAI. |
 
-Gate optional deps behind features; keep default build lean.
+Python and Node bindings enable `code` and `mcp` on the path dependency.
+Gate other optional deps behind features. Keep the default build lean.
 
 ## Testing
 
-- Heavy Wiremock suite in `tests/`.
-- Tool harness for offline scripted plans — prefer over live API in CI.
+- Wiremock suite in `tests/`.
+- Tool harness for offline scripted plans. Prefer that over a live API in CI.
 
 ## Consumers
 
-`loom`, `charlotte`, `loom-coms`, and all language bindings.
+`loom`, `charlotte`, `loom-coms`, Butler, and the language bindings.

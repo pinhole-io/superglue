@@ -1,15 +1,11 @@
 //! Superglue — polyglot LLM orchestration core.
 //!
-//! Phase 1: HTTP client with retries, rate limiting, and SSE framing. See [`http`].
-//! Phase 2: JSON [`tools`] registry, async [`Tool`] trait, and harness for scripted plans.
-//! Phase 2b: OpenAI-shaped [`openai`] types and [`chat`] completions with tool loop.
-//! Phase 3: Protobuf canonical schema at [`proto`] — the public API surface for all bindings.
-//! Phase 4: Streaming completions via [`chat::stream_complete`] (SSE / `stream: true`).
-//! Phase 5: Concurrent [`batch`] completions with configurable error strategies.
-//! Phase 6: [`agents`] with persona/goals/constraints; [`hooks`] and [`guardrails`] pipeline.
-//! Phase 7: [`telemetry`] (subscriber wiring, OTLP, metrics, scrubbing), [`cancel`],
-//!          [`http::download`] throttling, per-tool policies, [`audit`] run recording,
-//!          and optional [`grpc`] server.
+//! The Rust crate owns provider I/O, the tool loop, streaming, and optional servers.
+//! Python, JavaScript, and Kotlin bindings are thin wrappers.
+//!
+//! Start at [`client`] for `Client` and `ClientConversation`.
+//! Provider routing lives in [`providers`]. Chat and tools live in [`chat`] and [`tools`].
+//! Design notes are in the `_docs/` directory next to this crate.
 
 pub mod agents;
 pub mod audio;

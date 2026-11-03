@@ -1,10 +1,13 @@
-# Context optimization (GlueLLM parity)
+# Context optimization
 
-Superglue ports [GlueLLM](https://github.com/Bioto/glue-llm) context optimization as **opt-in** features on [`ChatOptions`](../src/chat/mod.rs). Defaults match GlueLLM: standard tool mode, condensing off, AAAK off.
+Context optimization is opt-in on [`ChatOptions`](../src/chat/mod.rs).
+The default tool mode is standard.
+Condensing is off.
+AAAK is off.
 
 ## Recommended settings for multi-tool agents
 
-For agents that register many tools or run multi-round tool loops, enable context optimization even if you keep GlueLLM-compatible defaults elsewhere:
+Enable context optimization when an agent registers many tools or runs a multi-round tool loop:
 
 | Setting | Why |
 |---------|-----|
@@ -22,10 +25,11 @@ Pin always-needed tools with `static_tool = true` so they stay available in dyna
 |---------|--------|--------------|
 | **Dynamic tool routing** | `tool_mode = Dynamic` | Exposes router tool `request_tools` first; a fast model selects relevant tools; only matched schemas are sent on later rounds |
 | **Programmatic tool calling** | `tool_mode = Code` | `request_tools` returns matched name/description/parameter schemas; the model then calls `code` with JavaScript |
-| **Static tools** | `ToolSpec.static_tool = true` | Always included in dynamic and code modes (GlueLLM `@static_tool`) |
+| **Static tools** | `ToolSpec.static_tool = true` | Always included in dynamic and code modes |
 | **Tool-round condensing** | `condense_tool_messages = true` | After each tool round, replaces assistant + N tool messages with one compact user summary |
 | **AAAK tool encoding** | `aaak_tool_condensing = true` | Uses deterministic `[AT]` blocks instead of plain `[Tool Results]` (requires condensing) |
 | **History compression** | `summarize_context.enabled = true` | LLM-compresses older messages when `messages.len() > threshold`, keeping the tail |
+| **Tool-result cap** | `tool_result_max_chars` | Cuts each tool-result message. `0` keeps the full result. That is the default. |
 
 ## Dynamic routing flow
 
@@ -80,20 +84,26 @@ use superglue::tools::ToolMode;
 
 let client = superglue::Client::builder()
     .tool_mode(ToolMode::Dynamic)
-    .tool_route_model("gpt-4o-mini") // optional; default fast model in core
+    .tool_route_model("gpt-4o-mini")
     .condense_tool_messages(true)
     .aaak_tool_condensing(false)
     .summarize_context(SummarizeContextConfig {
         enabled: true,
         threshold: 20,
         keep_recent: 6,
+        ..SummarizeContextConfig::default()
     })
     .aaak_compression_enabled(true)
-    .aaak_compression_model(None)
+    .aaak_compression_model("gpt-4o-mini")
+    .tool_result_max_chars(8_000)
     .build()?;
 ```
 
-Register a pinned tool with `ToolSpec::new(...).with_static_tool(true)` or `static_tool: true` on the struct.
+Omit `.tool_route_model` to use `gpt-5.4-nano-2026-03-17-mini`.
+Omit `.aaak_compression_model` to compress with the chat model.
+`tool_result_max_chars` of `0` disables the cap.
+
+Register a pinned tool with `ToolSpec::new(...).with_static_tool(true)`.
 
 ### Python
 
@@ -142,7 +152,7 @@ Integration tests: `tests/context_optimization_wiremock.rs`.
 
 ## Benchmarks
 
-Deterministic wiremock comparison (no API key). Uses **GlueLLM-style sequential tool chains** over **9 tools** (weather, forecast, flights, hotel, calculate, FX, translate, country + pinned `get_time`):
+Deterministic wiremock comparison (no API key). Uses sequential tool chains over **9 tools** (weather, forecast, flights, hotel, calculate, FX, translate, country + pinned `get_time`):
 
 ```bash
 cargo run --example 33_context_optimization_benchmark
@@ -183,7 +193,7 @@ Both examples **33** (wiremock) and **34** (live) print the same column semantic
 | `vs_standard` | Delta vs `*_standard` (`-N%` = fewer tokens, `+N%` = more) |
 | `done` | Whether all expected tools for the scenario were invoked (`Y`/`N`) |
 
-**Why cumulative tokens, not final history bytes:** GlueLLM's benchmark compares total prompt+completion tokens across a multi-step tool chain. Single-round tasks and final-history snapshots do not show the compounding win from condensing + dynamic routing. Our workload uses parallel tool batches over 9 registered tools (models may still choose sequential calls live; wiremock scripts one parallel batch per scenario).
+The headline metric is the sum of prompt and completion tokens across a multi-step tool chain. A single round, or a snapshot of the final history, hides the gain from condensing and dynamic routing. The workload uses parallel tool batches over 9 registered tools. A live model may still call tools one at a time. Wiremock scripts one parallel batch per scenario.
 
 **Trust boundaries:**
 
@@ -217,5 +227,7 @@ Examples **33** and **34** also print a **multi-turn conversation** section afte
 
 ## Reference
 
-- [GlueLLM README — Context condensing + Dynamic routing](https://github.com/Bioto/glue-llm/blob/main/README.md)
-- [AAAK_COMPRESSION.md](https://github.com/Bioto/glue-llm/blob/main/docs/AAAK_COMPRESSION.md)
+- Dynamic routing: `src/tools/router.rs`
+- Round condensing: `src/context/condense.rs`
+- AAAK encoding: `src/context/aaak.rs`
+- History summary: `src/context/summarize.rs`
