@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::gateway::GatewayState;
 use crate::gateway::auth::{Auth, resolve_user_id};
 use crate::gateway::error::GatewayError;
+use crate::gateway::budget::estimate_hold_usd;
 use crate::gateway::proxy::{preflight_async, record_usage_async};
 use crate::systemone::{
     SystemOneError, SystemOneRequest, SystemOneResponse, qualify_model, system_one,
@@ -38,19 +39,35 @@ pub async fn evaluate(
     let model_ref = qualify_model(body.model.as_deref()).map_err(system_one_to_gateway)?;
     let qualified = format!("typesafe:{}", model_ref.model);
     let user_id = resolve_user_id(&auth, body.user.as_deref())?;
-    preflight_async(&state.db, &auth, &user_id, &qualified).await?;
+    let request_id = Uuid::new_v4().to_string();
+    let prompt_chars = serde_json::to_string(&body.questions)
+        .map(|text| text.len())
+        .unwrap_or(0);
+    let estimate = estimate_hold_usd(&qualified, prompt_chars, None);
+    let mut hold = preflight_async(
+        &state.db,
+        &auth,
+        &user_id,
+        &qualified,
+        &request_id,
+        estimate,
+    )
+    .await?;
 
     let request = SystemOneRequest {
         state: body.state,
         model: Some(qualified.clone()),
         questions: body.questions,
     };
-    let response = system_one(&state.http, &state.credentials, request)
-        .await
-        .map_err(system_one_to_gateway)?;
+    let response = match system_one(&state.http, &state.credentials, request).await {
+        Ok(response) => response,
+        Err(error) => {
+            hold.release().await;
+            return Err(system_one_to_gateway(error));
+        }
+    };
 
     let usage = response.usage.to_proto();
-    let request_id = Uuid::new_v4().to_string();
     record_usage_async(
         &state.db,
         auth.key_id.as_deref(),
@@ -61,6 +78,7 @@ pub async fn evaluate(
         &request_id,
     )
     .await?;
+    hold.disarm();
 
     let value = serde_json::to_value(SystemOneResponse {
         model: response.model,

@@ -11,6 +11,7 @@ use axum::Json;
 use axum::extract::{Multipart, State};
 use axum::response::{IntoResponse, Response};
 use secrecy::ExposeSecret;
+use uuid::Uuid;
 
 use serde_json::Value;
 
@@ -18,6 +19,7 @@ use crate::audio::{provider_transcription_path, supports_transcription};
 use crate::gateway::GatewayState;
 use crate::gateway::auth::{Auth, resolve_user_id};
 use crate::gateway::error::{GatewayError, GatewayResult};
+use crate::gateway::budget::estimate_hold_usd;
 use crate::gateway::proxy::preflight_async;
 use crate::http::join_base_url;
 use crate::providers::{ProviderId, parse_model_ref};
@@ -49,7 +51,17 @@ pub async fn transcribe(
         )));
     }
     let user_id = resolve_user_id(&auth, form.user.as_deref())?;
-    preflight_async(&state.db, &auth, &user_id, &qualified).await?;
+    let request_id = Uuid::new_v4().to_string();
+    let estimate = estimate_hold_usd(&qualified, 0, None);
+    let hold = preflight_async(
+        &state.db,
+        &auth,
+        &user_id,
+        &qualified,
+        &request_id,
+        estimate,
+    )
+    .await?;
 
     let key = state
         .credentials
@@ -70,7 +82,7 @@ pub async fn transcribe(
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect();
 
-    let value = state
+    let value = match state
         .http
         .post_multipart_with_fields(
             &url,
@@ -82,7 +94,14 @@ pub async fn transcribe(
             None,
         )
         .await
-        .map_err(|error| GatewayError::upstream(error.to_string()))?;
+    {
+        Ok(value) => value,
+        Err(error) => {
+            hold.release().await;
+            return Err(GatewayError::upstream(error.to_string()));
+        }
+    };
+    hold.release().await;
     Ok(Json(openai_word_shape(model_ref.provider, value)).into_response())
 }
 

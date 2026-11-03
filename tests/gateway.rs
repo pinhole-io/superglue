@@ -585,6 +585,90 @@ async fn budget_enforce_returns_429() {
 }
 
 #[tokio::test]
+async fn budget_hold_rejects_completion_above_remaining_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = router(test_state(MASTER_KEY, &dir.path().join("gw.db")));
+
+    let budget = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/budgets",
+            MASTER_KEY,
+            Some(json!({ "max_budget": 0.01, "duration_sec": 3600, "enforce": true })),
+        ))
+        .await
+        .unwrap();
+    let budget_id = body_to_json(budget.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "held",
+                "allowed_models": ["openai:*"],
+                "budget_id": budget_id,
+                "enabled": true
+            })),
+        ))
+        .await
+        .unwrap();
+    let profile_id = body_to_json(profile.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    app.clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/users",
+            MASTER_KEY,
+            Some(json!({ "user_id": "user-1", "profile_id": profile_id })),
+        ))
+        .await
+        .unwrap();
+
+    let key_resp = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({
+                "user_id": "user-1",
+                "allowed_models": ["openai:*"]
+            })),
+        ))
+        .await
+        .unwrap();
+    let virtual_key = body_to_json(key_resp.into_body()).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/chat/completions",
+            &virtual_key,
+            Some(json!({
+                "model": "openai:gpt-4o-mini",
+                "messages": [{ "role": "user", "content": "hello" }],
+                "max_completion_tokens": 100000
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn list_models_returns_allowlist() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(MASTER_KEY, &dir.path().join("gw.db"));

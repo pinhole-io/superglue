@@ -1,12 +1,19 @@
-//! In-memory audit trail for superglue runs and resume helpers.
+//! Audit trail for superglue runs and resume helpers.
+//!
+//! [`MemoryRunStore`] keeps records in memory. [`JsonlRunStore`] appends one JSON
+//! object per step under a caller-supplied directory.
 
-use std::collections::VecDeque;
-use std::sync::Arc;
+mod jsonl;
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::RwLock;
+
+pub use jsonl::JsonlRunStore;
 
 use crate::chat::{ChatOptions, CompletionOutcome, complete_with_tools};
 use crate::events::{ProcessEvent, ProcessEventKind, StatusSubscriber};
@@ -17,41 +24,55 @@ use crate::proto;
 use crate::responses;
 
 // ---------------------------------------------------------------------------
-// RunStore
+// AuditStore
 // ---------------------------------------------------------------------------
 
-/// In-memory store of completed run records.
+/// Failure while writing or reading an audit log.
+#[derive(Debug, thiserror::Error)]
+pub enum AuditError {
+    #[error("request id is not a safe file name")]
+    BadRequestId,
+    #[error("audit log lock poisoned")]
+    Poisoned,
+    #[error("audit log io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("audit log json error: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+/// Persistence for run records and replayable steps.
+#[async_trait]
+pub trait AuditStore: Send + Sync {
+    /// Append one step. The store assigns `seq`.
+    fn append_blocking(&self, transition: proto::WorkflowTransition) -> Result<(), AuditError>;
+
+    /// Store a finished run record.
+    async fn insert(&self, record: proto::RunRecord) -> Result<(), AuditError>;
+
+    /// Return a finished record, or the fold of steps written so far.
+    async fn get(&self, request_id: &str) -> Option<proto::RunRecord>;
+
+    /// List known records.
+    async fn list(&self) -> Vec<proto::RunRecord>;
+}
+
+/// In-memory store of completed run records and partial steps.
 #[derive(Debug)]
-pub struct RunStore {
+pub struct MemoryRunStore {
     records: RwLock<VecDeque<proto::RunRecord>>,
+    transitions: Mutex<HashMap<String, Vec<proto::WorkflowTransition>>>,
+    seqs: Mutex<HashMap<String, u32>>,
     max_capacity: Option<usize>,
 }
 
-impl RunStore {
+impl MemoryRunStore {
     pub fn new(max_capacity: Option<usize>) -> Self {
-        RunStore {
+        MemoryRunStore {
             records: RwLock::new(VecDeque::new()),
+            transitions: Mutex::new(HashMap::new()),
+            seqs: Mutex::new(HashMap::new()),
             max_capacity,
         }
-    }
-
-    pub async fn insert(&self, record: proto::RunRecord) {
-        let mut deque = self.records.write().await;
-        if let Some(cap) = self.max_capacity {
-            while deque.len() >= cap {
-                deque.pop_front();
-            }
-        }
-        deque.push_back(record);
-    }
-
-    pub async fn get(&self, request_id: &str) -> Option<proto::RunRecord> {
-        let deque = self.records.read().await;
-        deque.iter().find(|r| r.request_id == request_id).cloned()
-    }
-
-    pub async fn list(&self) -> Vec<proto::RunRecord> {
-        self.records.read().await.iter().cloned().collect()
     }
 
     pub async fn clear(&self) {
@@ -64,6 +85,46 @@ impl RunStore {
 
     pub async fn is_empty(&self) -> bool {
         self.records.read().await.is_empty()
+    }
+}
+
+#[async_trait]
+impl AuditStore for MemoryRunStore {
+    fn append_blocking(&self, mut transition: proto::WorkflowTransition) -> Result<(), AuditError> {
+        transition.seq = jsonl::next_seq(&self.seqs, &transition.request_id)?;
+        let mut guard = self.transitions.lock().map_err(|_| AuditError::Poisoned)?;
+        guard
+            .entry(transition.request_id.clone())
+            .or_default()
+            .push(transition);
+        Ok(())
+    }
+
+    async fn insert(&self, record: proto::RunRecord) -> Result<(), AuditError> {
+        let mut deque = self.records.write().await;
+        if let Some(cap) = self.max_capacity {
+            while deque.len() >= cap {
+                deque.pop_front();
+            }
+        }
+        deque.push_back(record);
+        Ok(())
+    }
+
+    async fn get(&self, request_id: &str) -> Option<proto::RunRecord> {
+        {
+            let deque = self.records.read().await;
+            if let Some(record) = deque.iter().find(|record| record.request_id == request_id) {
+                return Some(record.clone());
+            }
+        }
+        let guard = self.transitions.lock().ok()?;
+        let transitions = guard.get(request_id)?;
+        Some(record_from_transitions(transitions))
+    }
+
+    async fn list(&self) -> Vec<proto::RunRecord> {
+        self.records.read().await.iter().cloned().collect()
     }
 }
 
@@ -81,11 +142,11 @@ pub struct FinishMetadata {
 
 /// Accumulates hook and process events for a run.
 pub struct RunRecorder {
-    store: Arc<RunStore>,
+    store: Arc<dyn AuditStore>,
     max_hook_events: Option<usize>,
     max_process_events: Option<usize>,
-    events: RwLock<VecDeque<proto::HookEvent>>,
-    process_events: RwLock<VecDeque<proto::ProcessEvent>>,
+    events: RwLock<HashMap<String, VecDeque<proto::HookEvent>>>,
+    process_events: RwLock<HashMap<String, VecDeque<proto::ProcessEvent>>>,
 }
 
 fn push_capped<T>(deque: &mut VecDeque<T>, item: T, cap: Option<usize>) {
@@ -98,12 +159,12 @@ fn push_capped<T>(deque: &mut VecDeque<T>, item: T, cap: Option<usize>) {
 }
 
 impl RunRecorder {
-    pub fn new(store: Arc<RunStore>) -> Self {
+    pub fn new(store: Arc<dyn AuditStore>) -> Self {
         Self::with_caps(store, Some(10_000), Some(10_000))
     }
 
     pub fn with_caps(
-        store: Arc<RunStore>,
+        store: Arc<dyn AuditStore>,
         max_hook_events: Option<usize>,
         max_process_events: Option<usize>,
     ) -> Self {
@@ -111,9 +172,13 @@ impl RunRecorder {
             store,
             max_hook_events,
             max_process_events,
-            events: RwLock::new(VecDeque::new()),
-            process_events: RwLock::new(VecDeque::new()),
+            events: RwLock::new(HashMap::new()),
+            process_events: RwLock::new(HashMap::new()),
         }
+    }
+
+    pub fn store(&self) -> Arc<dyn AuditStore> {
+        Arc::clone(&self.store)
     }
 
     pub fn all_stages() -> Vec<HookStage> {
@@ -158,29 +223,50 @@ impl RunRecorder {
     ) {
         let events = {
             let mut guard = self.events.write().await;
-            std::mem::take(&mut *guard).into()
+            guard.remove(&request_id).unwrap_or_default().into()
         };
         let process_events = {
             let mut guard = self.process_events.write().await;
-            std::mem::take(&mut *guard).into()
+            guard.remove(&request_id).unwrap_or_default().into()
         };
         let record = proto::RunRecord {
-            request_id,
+            request_id: request_id.clone(),
             messages,
             hook_events: events,
-            outcome: Some(outcome),
+            outcome: Some(outcome.clone()),
             started_at_ms,
             finished_at_ms,
             process_events,
             options_json: meta.options_json,
             model_used: meta.model_used,
+            previous_response_id: meta.previous_response_id.clone(),
+        };
+        let finished = proto::WorkflowTransition {
+            request_id: request_id.clone(),
+            seq: 0,
+            kind: proto::WorkflowTransitionKind::RunFinished as i32,
+            timestamp_ms: finished_at_ms,
+            message: None,
+            process_event: None,
+            outcome: Some(outcome),
+            error_type: None,
             previous_response_id: meta.previous_response_id,
         };
-        self.store.insert(record).await;
+        if let Err(error) = self.store.append_blocking(finished) {
+            tracing::warn!("audit transition append failed: {error}");
+        }
+        if let Err(error) = self.store.insert(record).await {
+            tracing::warn!("audit record insert failed: {error}");
+        }
     }
 
     pub async fn peek_events(&self) -> Vec<proto::HookEvent> {
-        self.events.read().await.iter().cloned().collect()
+        self.events
+            .read()
+            .await
+            .values()
+            .flat_map(|events| events.iter().cloned())
+            .collect()
     }
 
     /// Persist a completed chat turn into the configured [`RunStore`].
@@ -249,7 +335,10 @@ impl RunRecorder {
             metadata: event.metadata,
         };
         if let Ok(mut guard) = self.process_events.try_write() {
-            push_capped(&mut guard, proto_event, self.max_process_events);
+            let bucket = guard
+                .entry(proto_event.request_id.clone())
+                .or_default();
+            push_capped(bucket, proto_event, self.max_process_events);
         }
     }
 }
@@ -315,7 +404,8 @@ impl HookHandler for RunRecorder {
         };
 
         let mut guard = self.events.write().await;
-        push_capped(&mut guard, event, self.max_hook_events);
+        let bucket = guard.entry(event.request_id.clone()).or_default();
+        push_capped(bucket, event, self.max_hook_events);
         Ok(ctx)
     }
 }
@@ -345,6 +435,80 @@ pub enum ResumeError {
     MissingOptions,
     #[error("failed to parse stored options: {0}")]
     InvalidOptions(String),
+}
+
+/// Rebuild a run from ordered transitions.
+///
+/// A trailing assistant message whose tool calls have no results is dropped.
+/// The next completion runs that round again.
+pub fn record_from_transitions(transitions: &[proto::WorkflowTransition]) -> proto::RunRecord {
+    let mut request_id = String::new();
+    let mut messages = Vec::new();
+    let mut outcome = None;
+    let mut started_at_ms = 0;
+    let mut finished_at_ms = 0;
+    let mut previous_response_id = None;
+    for transition in transitions {
+        if !transition.request_id.is_empty() {
+            request_id = transition.request_id.clone();
+        }
+        match proto::WorkflowTransitionKind::try_from(transition.kind) {
+            Ok(proto::WorkflowTransitionKind::RunStarted) => {
+                started_at_ms = transition.timestamp_ms;
+            }
+            Ok(proto::WorkflowTransitionKind::MessageAppended) => {
+                if let Some(message) = &transition.message {
+                    messages.push(message.clone());
+                }
+            }
+            Ok(proto::WorkflowTransitionKind::RunFinished) => {
+                outcome = transition.outcome.clone();
+                finished_at_ms = transition.timestamp_ms;
+                if transition.previous_response_id.is_some() {
+                    previous_response_id = transition.previous_response_id.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+    drop_incomplete_tool_round(&mut messages);
+    proto::RunRecord {
+        request_id,
+        messages,
+        hook_events: Vec::new(),
+        outcome,
+        started_at_ms,
+        finished_at_ms,
+        process_events: Vec::new(),
+        options_json: None,
+        model_used: None,
+        previous_response_id,
+    }
+}
+
+fn drop_incomplete_tool_round(messages: &mut Vec<proto::ChatMessage>) {
+    let Some(index) = messages.iter().rposition(|message| {
+        message.role == "assistant" && !message.tool_calls.is_empty()
+    }) else {
+        return;
+    };
+    let ids: Vec<String> = messages[index]
+        .tool_calls
+        .iter()
+        .map(|call| call.id.clone())
+        .filter(|id| !id.is_empty())
+        .collect();
+    if ids.is_empty() {
+        return;
+    }
+    let complete = ids.iter().all(|id| {
+        messages[index + 1..]
+            .iter()
+            .any(|message| message.tool_call_id.as_deref() == Some(id.as_str()))
+    });
+    if !complete {
+        messages.truncate(index);
+    }
 }
 
 /// Current Unix timestamp in milliseconds.

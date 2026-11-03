@@ -225,6 +225,29 @@ message ProcessEvent {
   map<string, string> metadata = 10;
 }
 
+/// One step of a unary tool loop, stored so a run can resume after a crash.
+enum WorkflowTransitionKind {
+  RUN_STARTED = 0;
+  MESSAGE_APPENDED = 1;
+  LLM_CALL_FINISHED = 2;
+  TOOL_CALL_FINISHED = 3;
+  RUN_FINISHED = 4;
+  RUN_FAILED = 5;
+}
+
+message WorkflowTransition {
+  string request_id = 1;
+  uint32 seq = 2;
+  WorkflowTransitionKind kind = 3;
+  int64 timestamp_ms = 4;
+  optional ChatMessage message = 5;
+  optional ProcessEvent process_event = 6;
+  optional CompletionOutcome outcome = 7;
+  optional string error_type = 8;
+  /// Responses API id captured on RUN_FINISHED.
+  optional string previous_response_id = 9;
+}
+
 // ---------------------------------------------------------------------------
 // gRPC streaming
 // ---------------------------------------------------------------------------

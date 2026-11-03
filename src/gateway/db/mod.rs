@@ -11,7 +11,8 @@ use uuid::Uuid;
 use crate::gateway::auth::hash_key;
 use crate::gateway::error::{GatewayError, GatewayResult};
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
+const RESERVATION_TTL_MINUTES: i64 = 15;
 const MAX_PROFILE_MODELS: usize = 64;
 
 const MIGRATION_V1: &str = "
@@ -108,6 +109,16 @@ CREATE TABLE IF NOT EXISTS proxy_providers (
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+";
+
+const MIGRATION_V5: &str = "
+ALTER TABLE users ADD COLUMN reserved_usd REAL NOT NULL DEFAULT 0.0;
+CREATE TABLE IF NOT EXISTS budget_reservations (
+    request_id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    created_at TEXT NOT NULL
 );
 ";
 
@@ -1189,7 +1200,77 @@ impl Database {
         Ok((enforce, max_budget, current_spend))
     }
 
+    /// Hold `estimate_usd` against the user's budget.
+    ///
+    /// The reset of an expired window and the hold commit together.
+    /// A non-positive or non-finite estimate does not insert a row.
+    pub fn reserve_budget(
+        &self,
+        user_id: &str,
+        request_id: &str,
+        estimate_usd: f64,
+    ) -> GatewayResult<()> {
+        let estimate = finite_nonnegative(estimate_usd);
+        let conn = self.lock()?;
+        let tx = conn.unchecked_transaction()?;
+        let now = chrono::Utc::now();
+        expire_reservations(&tx, now)?;
+        let (enforce, max_budget, spend, reserved) =
+            budget_snapshot_for_reserve(&tx, user_id, now)?;
+        let projected = spend + reserved;
+        if enforce && (projected >= max_budget || projected + estimate > max_budget) {
+            return Err(GatewayError::budget_exceeded(format!(
+                "user {user_id} has exceeded budget (${projected:.4} + ${estimate:.4} > ${max_budget:.4})"
+            )));
+        }
+        if enforce && estimate > 0.0 {
+            tx.execute(
+                "INSERT INTO budget_reservations (request_id, user_id, amount, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![request_id, user_id, estimate, now.to_rfc3339()],
+            )?;
+            tx.execute(
+                "UPDATE users SET reserved_usd = reserved_usd + ?1 WHERE id = ?2",
+                params![estimate, user_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Drop a hold. A missing row is a successful no-op.
+    pub fn release_budget(&self, request_id: &str) -> GatewayResult<()> {
+        let conn = self.lock()?;
+        let tx = conn.unchecked_transaction()?;
+        release_reservation(&tx, request_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn set_reservation_created_at(&self, request_id: &str, created_at: &str) -> GatewayResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE budget_reservations SET created_at = ?1 WHERE request_id = ?2",
+            params![created_at, request_id],
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn user_reserved_usd(&self, user_id: &str) -> GatewayResult<f64> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT reserved_usd FROM users WHERE id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| GatewayError::not_found(format!("user {user_id} not found")))
+    }
+
     /// Atomically record usage and increment user spend.
+    ///
+    /// When a reservation exists for `request_id`, the hold is replaced by `cost_usd`.
+    /// A second call for the same request id adds spend again only when the hold is already gone.
     pub fn record_usage(
         &self,
         key_id: Option<&str>,
@@ -1200,6 +1281,7 @@ impl Database {
         cost_usd: f64,
         request_id: &str,
     ) -> GatewayResult<()> {
+        let cost_usd = finite_nonnegative(cost_usd);
         let conn = self.lock()?;
         let tx = conn.unchecked_transaction()?;
         insert_usage_tx(
@@ -1212,9 +1294,11 @@ impl Database {
             cost_usd,
             request_id,
         )?;
+        let held = release_reservation(&tx, request_id)?;
+        let spend_user = held.as_ref().map(|(user, _)| user.as_str()).unwrap_or(user_id);
         tx.execute(
             "UPDATE users SET spend = spend + ?1 WHERE id = ?2",
-            params![cost_usd, user_id],
+            params![cost_usd, spend_user],
         )?;
         tx.commit()?;
         Ok(())
@@ -1494,6 +1578,142 @@ fn map_proxy_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProxyProviderStore
     })
 }
 
+fn finite_nonnegative(value: f64) -> f64 {
+    if value.is_finite() && value >= 0.0 {
+        value
+    } else {
+        0.0
+    }
+}
+
+fn expire_reservations(
+    tx: &Transaction<'_>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> GatewayResult<()> {
+    let cutoff = (now - chrono::Duration::minutes(RESERVATION_TTL_MINUTES)).to_rfc3339();
+    let mut stmt = tx.prepare(
+        "SELECT request_id, user_id, amount FROM budget_reservations WHERE created_at <= ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![cutoff], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    for (request_id, user_id, amount) in rows {
+        tx.execute(
+            "UPDATE users SET reserved_usd = MAX(0.0, reserved_usd - ?1) WHERE id = ?2",
+            params![amount, user_id],
+        )?;
+        tx.execute(
+            "DELETE FROM budget_reservations WHERE request_id = ?1",
+            params![request_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn release_reservation(
+    tx: &Transaction<'_>,
+    request_id: &str,
+) -> GatewayResult<Option<(String, f64)>> {
+    let row = tx
+        .query_row(
+            "SELECT user_id, amount FROM budget_reservations WHERE request_id = ?1",
+            params![request_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+        )
+        .optional()?;
+    let Some((user_id, amount)) = row else {
+        return Ok(None);
+    };
+    tx.execute(
+        "DELETE FROM budget_reservations WHERE request_id = ?1",
+        params![request_id],
+    )?;
+    tx.execute(
+        "UPDATE users SET reserved_usd = MAX(0.0, reserved_usd - ?1) WHERE id = ?2",
+        params![amount, user_id],
+    )?;
+    Ok(Some((user_id, amount)))
+}
+
+/// Reset an expired window and return `(enforce, max_budget, spend, reserved)`.
+fn budget_snapshot_for_reserve(
+    tx: &Transaction<'_>,
+    user_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> GatewayResult<(bool, f64, f64, f64)> {
+    let (budget_id, spend, next_reset, reserved) = tx
+        .query_row(
+            "SELECT budget_id, spend, next_budget_reset_at, reserved_usd FROM users WHERE id = ?1",
+            params![user_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            },
+        )
+        .map_err(|_| GatewayError::not_found(format!("user {user_id} not found")))?;
+
+    let Some(budget_id) = budget_id else {
+        return Ok((false, f64::MAX, spend, reserved));
+    };
+
+    let (max_budget, duration_sec, enforce) = tx
+        .query_row(
+            "SELECT max_budget, duration_sec, enforce FROM budgets WHERE id = ?1",
+            params![budget_id],
+            |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i32>(2)? != 0,
+                ))
+            },
+        )
+        .map_err(|_| GatewayError::not_found(format!("budget {budget_id} not found")))?;
+
+    let now_rfc = now.to_rfc3339();
+    let reset_due = next_reset
+        .as_deref()
+        .is_none_or(|reset_at| reset_at <= now_rfc.as_str());
+    if !reset_due {
+        return Ok((enforce, max_budget, spend, reserved));
+    }
+
+    let mut current_spend = spend;
+    if let Some(reset_at) = next_reset {
+        if reset_at <= now_rfc {
+            let reset_id = Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO budget_reset_logs (id, user_id, budget_id, previous_spend, reset_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![reset_id, user_id, budget_id, spend, now_rfc],
+            )?;
+            current_spend = 0.0;
+            let next = (now + chrono::Duration::seconds(duration_sec)).to_rfc3339();
+            tx.execute(
+                "UPDATE users SET spend = 0.0, next_budget_reset_at = ?1 WHERE id = ?2",
+                params![next, user_id],
+            )?;
+        }
+    } else {
+        let next = (now + chrono::Duration::seconds(duration_sec)).to_rfc3339();
+        tx.execute(
+            "UPDATE users SET next_budget_reset_at = ?1 WHERE id = ?2",
+            params![next, user_id],
+        )?;
+    }
+    Ok((enforce, max_budget, current_spend, reserved))
+}
+
 fn run_migrations(conn: &Connection) -> GatewayResult<()> {
     let mut version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version < 1 {
@@ -1513,6 +1733,11 @@ fn run_migrations(conn: &Connection) -> GatewayResult<()> {
     }
     if version < 4 {
         conn.execute_batch(MIGRATION_V4)?;
+        version = 4;
+        conn.pragma_update(None, "user_version", version)?;
+    }
+    if version < 5 {
+        conn.execute_batch(MIGRATION_V5)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
@@ -1865,5 +2090,74 @@ mod tests {
 
         let err = db.create_user("u1", None, Some(&created.id)).unwrap_err();
         assert!(err.to_string().contains("disabled"));
+    }
+
+    fn budgeted_user(max_budget: f64) -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("test.db")).unwrap();
+        let budget = db.create_budget(max_budget, 86_400, true).unwrap();
+        let profile = db
+            .create_profile(
+                "budgeted",
+                None,
+                &["openai:*".into()],
+                Some(&budget.id),
+                None,
+                true,
+            )
+            .unwrap();
+        db.create_user("user-1", None, Some(&profile.id)).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn second_reserve_returns_budget_exceeded() {
+        let (_dir, db) = budgeted_user(0.01);
+        db.reserve_budget("user-1", "req-a", 0.006).unwrap();
+        let err = db.reserve_budget("user-1", "req-b", 0.006).unwrap_err();
+        assert!(err.to_string().contains("exceeded budget"));
+        assert!((db.user_reserved_usd("user-1").unwrap() - 0.006).abs() < 1e-9);
+    }
+
+    #[test]
+    fn settle_replaces_hold_with_actual_cost() {
+        let (_dir, db) = budgeted_user(1.0);
+        db.reserve_budget("user-1", "req-a", 0.20).unwrap();
+        db.record_usage(None, "user-1", "openai:gpt-4o-mini", 10, 5, 0.05, "req-a")
+            .unwrap();
+        let user = db.get_user("user-1").unwrap().unwrap();
+        assert!((user.spend - 0.05).abs() < 1e-9);
+        assert!(db.user_reserved_usd("user-1").unwrap().abs() < 1e-9);
+    }
+
+    #[test]
+    fn release_clears_hold_without_spend() {
+        let (_dir, db) = budgeted_user(1.0);
+        db.reserve_budget("user-1", "req-a", 0.20).unwrap();
+        db.release_budget("req-a").unwrap();
+        db.release_budget("req-a").unwrap();
+        let user = db.get_user("user-1").unwrap().unwrap();
+        assert_eq!(user.spend, 0.0);
+        assert!(db.user_reserved_usd("user-1").unwrap().abs() < 1e-9);
+    }
+
+    #[test]
+    fn expired_reservation_does_not_count() {
+        let (_dir, db) = budgeted_user(0.01);
+        db.reserve_budget("user-1", "req-old", 0.009).unwrap();
+        let stale = (chrono::Utc::now() - chrono::Duration::minutes(RESERVATION_TTL_MINUTES + 1))
+            .to_rfc3339();
+        db.set_reservation_created_at("req-old", &stale).unwrap();
+        db.reserve_budget("user-1", "req-new", 0.009).unwrap();
+        assert!((db.user_reserved_usd("user-1").unwrap() - 0.009).abs() < 1e-9);
+    }
+
+    #[test]
+    fn non_finite_cost_does_not_increase_spend() {
+        let (_dir, db) = budgeted_user(1.0);
+        db.record_usage(None, "user-1", "openai:gpt-4o-mini", 1, 1, f64::NAN, "req-nan")
+            .unwrap();
+        let user = db.get_user("user-1").unwrap().unwrap();
+        assert_eq!(user.spend, 0.0);
     }
 }

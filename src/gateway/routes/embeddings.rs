@@ -18,6 +18,7 @@ use crate::embeddings::{
 use crate::gateway::GatewayState;
 use crate::gateway::auth::{Auth, resolve_user_id};
 use crate::gateway::error::GatewayError;
+use crate::gateway::budget::estimate_hold_usd;
 use crate::gateway::proxy::{preflight_async, record_usage_async};
 use crate::gateway::proxy_provider::{self, ProxyTarget};
 use crate::http::join_base_url;
@@ -54,7 +55,17 @@ pub async fn create_embedding(
 
     let qualified = model_ref.qualified();
     let user_id = resolve_user_id(&auth, body.user.as_deref())?;
-    preflight_async(&state.db, &auth, &user_id, &qualified).await?;
+    let request_id = Uuid::new_v4().to_string();
+    let estimate = estimate_hold_usd(&qualified, embedding_prompt_chars(&body.input), None);
+    let mut hold = preflight_async(
+        &state.db,
+        &auth,
+        &user_id,
+        &qualified,
+        &request_id,
+        estimate,
+    )
+    .await?;
 
     if model_ref.provider == ProviderId::Bedrock {
         let outcome = embed(
@@ -84,9 +95,12 @@ pub async fn create_embedding(
                     reasoning_tokens: None,
                 }),
                 0.0,
-                &Uuid::new_v4().to_string(),
+                &request_id,
             )
             .await?;
+            hold.disarm();
+        } else {
+            hold.release().await;
         }
         return Ok(Json(openai_embedding_json(&outcome)));
     }
@@ -130,9 +144,12 @@ pub async fn create_embedding(
             &qualified,
             &usage,
             0.0,
-            &Uuid::new_v4().to_string(),
+            &request_id,
         )
         .await?;
+        hold.disarm();
+    } else {
+        hold.release().await;
     }
 
     Ok(Json(value))
@@ -145,7 +162,8 @@ async fn proxy_embedding(
 ) -> Result<Json<Value>, GatewayError> {
     let qualified = body.model.clone();
     let user_id = resolve_user_id(auth, body.user.as_deref())?;
-    preflight_async(&state.db, auth, &user_id, &qualified).await?;
+    let request_id = Uuid::new_v4().to_string();
+    let mut hold = preflight_async(&state.db, auth, &user_id, &qualified, &request_id, 0.0).await?;
     let model = body.model.clone();
     let master = state.config.master_key_exposed().to_string();
     let target = state
@@ -177,11 +195,21 @@ async fn proxy_embedding(
             &target.raw,
             &usage,
             cost,
-            &Uuid::new_v4().to_string(),
+            &request_id,
         )
         .await?;
+        hold.disarm();
+    } else {
+        hold.release().await;
     }
     Ok(Json(value))
+}
+
+fn embedding_prompt_chars(input: &EmbeddingInput) -> usize {
+    match input {
+        EmbeddingInput::Text(text) => text.len(),
+        EmbeddingInput::Texts(texts) => texts.iter().map(String::len).sum(),
+    }
 }
 
 fn embedding_upstream_body(body: &GatewayEmbeddingBody, target: &ProxyTarget) -> Value {

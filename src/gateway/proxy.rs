@@ -14,7 +14,7 @@ use crate::chat::{ChatError, ChatOptions, proxy_chat_post, proxy_chat_stream};
 use crate::costing::{apply_resolved_cost_usd, fetch_generation_cost_usd};
 use crate::gateway::GatewayState;
 use crate::gateway::auth::AuthContext;
-use crate::gateway::budget::check_budget;
+use crate::gateway::budget::{BudgetGuard, estimate_hold_usd, message_prompt_chars};
 use crate::gateway::db::Database;
 use crate::gateway::error::{GatewayError, GatewayResult};
 use crate::gateway::model_access;
@@ -123,18 +123,66 @@ pub(crate) async fn record_usage_async(
     .await
 }
 
-/// Validate model access and budget before proxying (async-safe).
+/// Validate model access and reserve budget before proxying (async-safe).
 pub async fn preflight_async(
     db: &Database,
     auth: &AuthContext,
     user_id: &str,
     model: &str,
-) -> GatewayResult<()> {
+    request_id: &str,
+    estimate_usd: f64,
+) -> GatewayResult<BudgetGuard> {
     let auth = auth.clone();
     let user_id = user_id.to_string();
     let model = model.to_string();
-    db.run_blocking(move |db| preflight(db, &auth, &user_id, &model))
-        .await
+    let request_id_owned = request_id.to_string();
+    db.run_blocking(move |db| {
+        preflight(
+            db,
+            &auth,
+            &user_id,
+            &model,
+            &request_id_owned,
+            estimate_usd,
+        )
+    })
+    .await?;
+    Ok(BudgetGuard::arm(db.clone(), request_id))
+}
+
+fn responses_prompt_chars(body: &GatewayResponsesBody) -> usize {
+    let input_chars = match &body.input {
+        Value::String(text) => text.len(),
+        other => other.to_string().len(),
+    };
+    input_chars
+        + body
+            .instructions
+            .as_ref()
+            .map(String::len)
+            .unwrap_or(0)
+}
+
+fn responses_max_completion(body: &GatewayResponsesBody) -> Option<u32> {
+    ["max_output_tokens", "max_completion_tokens"]
+        .into_iter()
+        .find_map(|key| {
+            body.extra
+                .get(key)
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+        })
+}
+
+fn hold_estimate(
+    model: &str,
+    prompt_chars: usize,
+    max_completion_tokens: Option<u32>,
+) -> f64 {
+    if proxy_provider::is_proxy_model(model) {
+        return 0.0;
+    }
+    estimate_hold_usd(model, prompt_chars, max_completion_tokens)
 }
 
 /// Parsed gateway completion request with optional master-key user field.
@@ -315,15 +363,24 @@ pub async fn proxy_response(
         stream: false,
         max_response_bytes,
     });
-    if let Err(err) = preflight_async(db, auth, &user_id, &model).await {
-        #[cfg(feature = "capture")]
-        tap.finish_err(err.to_string());
-        return Err(err);
-    }
+    let estimate = hold_estimate(
+        &model,
+        responses_prompt_chars(&body),
+        responses_max_completion(&body),
+    );
+    let mut hold = match preflight_async(db, auth, &user_id, &model, &request_id, estimate).await {
+        Ok(hold) => hold,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
     if proxy_provider::is_proxy_model(&model) {
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
             Err(err) => {
+                hold.release().await;
                 #[cfg(feature = "capture")]
                 tap.finish_err(err.to_string());
                 return Err(err);
@@ -336,6 +393,7 @@ pub async fn proxy_response(
             target,
             request_id,
             user_id,
+            hold,
             #[cfg(feature = "capture")]
             tap,
         )
@@ -349,7 +407,7 @@ pub async fn proxy_response(
     #[cfg(feature = "capture")]
     tap.set_request(&req_body);
 
-    let (val, model_ref) = responses::proxy_responses_post(
+    let (val, model_ref) = match responses::proxy_responses_post(
         http,
         credentials.as_ref(),
         &messages,
@@ -358,11 +416,15 @@ pub async fn proxy_response(
         &request_id,
     )
     .await
-    .map_err(|e| {
-        #[cfg(feature = "capture")]
-        tap.finish_err(e.to_string());
-        response_error_to_gateway(e)
-    })?;
+    {
+        Ok(value) => value,
+        Err(error) => {
+            hold.release().await;
+            #[cfg(feature = "capture")]
+            tap.finish_err(error.to_string());
+            return Err(response_error_to_gateway(error));
+        }
+    };
 
     #[cfg(feature = "capture")]
     {
@@ -382,7 +444,7 @@ pub async fn proxy_response(
             generation_id,
         )
         .await;
-        record_usage_async(
+        if let Err(error) = record_usage_async(
             db,
             auth.key_id.as_deref(),
             &user_id,
@@ -391,10 +453,16 @@ pub async fn proxy_response(
             cost,
             &request_id,
         )
-        .await?;
+        .await
+        {
+            hold.release().await;
+            return Err(error);
+        }
+        hold.disarm();
         #[cfg(feature = "capture")]
         tap.finish(Some(&proto_usage), Some(cost));
     } else {
+        hold.release().await;
         #[cfg(feature = "capture")]
         tap.finish(None, None);
     }
@@ -431,15 +499,24 @@ pub async fn proxy_response_stream(
         stream: true,
         max_response_bytes,
     });
-    if let Err(err) = preflight_async(&db, &auth, &user_id, &model).await {
-        #[cfg(feature = "capture")]
-        tap.finish_err(err.to_string());
-        return Err(err);
-    }
+    let estimate = hold_estimate(
+        &model,
+        responses_prompt_chars(&body),
+        responses_max_completion(&body),
+    );
+    let hold = match preflight_async(&db, &auth, &user_id, &model, &request_id, estimate).await {
+        Ok(hold) => hold,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
     if proxy_provider::is_proxy_model(&model) {
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
             Err(err) => {
+                hold.release().await;
                 #[cfg(feature = "capture")]
                 tap.finish_err(err.to_string());
                 return Err(err);
@@ -452,6 +529,7 @@ pub async fn proxy_response_stream(
             target,
             request_id,
             user_id,
+            hold,
             #[cfg(feature = "capture")]
             tap,
         )
@@ -465,7 +543,7 @@ pub async fn proxy_response_stream(
     #[cfg(feature = "capture")]
     tap.set_request(&req_body);
 
-    let (byte_stream, model_ref) = responses::proxy_responses_stream(
+    let (byte_stream, model_ref) = match responses::proxy_responses_stream(
         http,
         credentials.as_ref(),
         &messages,
@@ -474,11 +552,15 @@ pub async fn proxy_response_stream(
         &request_id,
     )
     .await
-    .map_err(|e| {
-        #[cfg(feature = "capture")]
-        tap.finish_err(e.to_string());
-        response_error_to_gateway(e)
-    })?;
+    {
+        Ok(value) => value,
+        Err(error) => {
+            hold.release().await;
+            #[cfg(feature = "capture")]
+            tap.finish_err(error.to_string());
+            return Err(response_error_to_gateway(error));
+        }
+    };
 
     let key_id = auth.key_id.clone();
     let (tx, rx) = mpsc::channel(GATEWAY_STREAM_BUFFER);
@@ -489,6 +571,7 @@ pub async fn proxy_response_stream(
     let credentials = Arc::clone(credentials);
 
     tokio::spawn(async move {
+        let mut hold = hold;
         let mut stream = byte_stream;
         let mut parser = SseParser::new();
         let mut round_usage: Option<proto::Usage> = None;
@@ -522,12 +605,14 @@ pub async fn proxy_response_stream(
                         }
                     }
                     if tx.send(Ok(bytes)).await.is_err() {
+                        hold.release().await;
                         #[cfg(feature = "capture")]
                         tap.finish(None, None);
                         return;
                     }
                 }
                 Err(e) => {
+                    hold.release().await;
                     #[cfg(feature = "capture")]
                     tap.finish_err(e.to_string());
                     let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
@@ -546,7 +631,7 @@ pub async fn proxy_response_stream(
                 generation_id.as_deref(),
             )
             .await;
-            let _ = record_usage_async(
+            let recorded = record_usage_async(
                 &db,
                 key_id.as_deref(),
                 &user_id,
@@ -555,10 +640,17 @@ pub async fn proxy_response_stream(
                 cost,
                 &request_id,
             )
-            .await;
+            .await
+            .is_ok();
+            if recorded {
+                hold.disarm();
+            } else {
+                hold.release().await;
+            }
             #[cfg(feature = "capture")]
             tap.finish(Some(&usage), Some(cost));
         } else {
+            hold.release().await;
             #[cfg(feature = "capture")]
             tap.finish(None, None);
         }
@@ -653,12 +745,14 @@ fn chat_error_to_gateway(err: ChatError) -> GatewayError {
     }
 }
 
-/// Validate model access and budget before proxying.
+/// Validate model access and reserve budget before proxying.
 pub fn preflight(
     db: &Database,
     auth: &AuthContext,
     user_id: &str,
     model: &str,
+    request_id: &str,
+    estimate_usd: f64,
 ) -> GatewayResult<()> {
     if !auth.is_master {
         if !model.contains(':') {
@@ -673,7 +767,7 @@ pub fn preflight(
             )));
         }
     }
-    match check_budget(db, user_id) {
+    match db.reserve_budget(user_id, request_id, estimate_usd) {
         Err(GatewayError::WithStatus { status, .. }) if status == StatusCode::NOT_FOUND => Err(
             GatewayError::bad_request(format!("user {user_id} does not exist")),
         ),
@@ -707,16 +801,34 @@ pub async fn proxy_completion(
         stream: false,
         max_response_bytes,
     });
-    if let Err(err) = preflight_async(db, auth, &user_id, &body.completion.model).await {
-        #[cfg(feature = "capture")]
-        tap.finish_err(err.to_string());
-        return Err(err);
-    }
+    let estimate = hold_estimate(
+        &body.completion.model,
+        message_prompt_chars(&body.completion.messages),
+        body.completion.max_completion_tokens,
+    );
+    let mut hold = match preflight_async(
+        db,
+        auth,
+        &user_id,
+        &body.completion.model,
+        &request_id,
+        estimate,
+    )
+    .await
+    {
+        Ok(hold) => hold,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
     if proxy_provider::is_proxy_model(&body.completion.model) {
         let model = body.completion.model.clone();
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
             Err(err) => {
+                hold.release().await;
                 #[cfg(feature = "capture")]
                 tap.finish_err(err.to_string());
                 return Err(err);
@@ -729,6 +841,7 @@ pub async fn proxy_completion(
             target,
             request_id,
             user_id,
+            hold,
             #[cfg(feature = "capture")]
             tap,
         )
@@ -744,7 +857,7 @@ pub async fn proxy_completion(
         tap.set_request(&request);
     }
 
-    let (val, model_ref) = proxy_chat_post(
+    let (val, model_ref) = match proxy_chat_post(
         http,
         credentials.as_ref(),
         &body.completion.messages,
@@ -753,11 +866,15 @@ pub async fn proxy_completion(
         &request_id,
     )
     .await
-    .map_err(|e| {
-        #[cfg(feature = "capture")]
-        tap.finish_err(e.to_string());
-        chat_error_to_gateway(e)
-    })?;
+    {
+        Ok(value) => value,
+        Err(error) => {
+            hold.release().await;
+            #[cfg(feature = "capture")]
+            tap.finish_err(error.to_string());
+            return Err(chat_error_to_gateway(error));
+        }
+    };
 
     #[cfg(feature = "capture")]
     {
@@ -776,7 +893,7 @@ pub async fn proxy_completion(
             extracted.generation_id.as_deref(),
         )
         .await;
-        record_usage_async(
+        if let Err(error) = record_usage_async(
             db,
             auth.key_id.as_deref(),
             &user_id,
@@ -785,10 +902,16 @@ pub async fn proxy_completion(
             cost,
             &request_id,
         )
-        .await?;
+        .await
+        {
+            hold.release().await;
+            return Err(error);
+        }
+        hold.disarm();
         #[cfg(feature = "capture")]
         tap.finish(Some(&proto_usage), Some(cost));
     } else {
+        hold.release().await;
         #[cfg(feature = "capture")]
         tap.finish(None, None);
     }
@@ -825,15 +948,24 @@ pub async fn proxy_completion_stream(
         stream: true,
         max_response_bytes,
     });
-    if let Err(err) = preflight_async(&db, &auth, &user_id, &model).await {
-        #[cfg(feature = "capture")]
-        tap.finish_err(err.to_string());
-        return Err(err);
-    }
+    let estimate = hold_estimate(
+        &model,
+        message_prompt_chars(&body.completion.messages),
+        body.completion.max_completion_tokens,
+    );
+    let hold = match preflight_async(&db, &auth, &user_id, &model, &request_id, estimate).await {
+        Ok(hold) => hold,
+        Err(err) => {
+            #[cfg(feature = "capture")]
+            tap.finish_err(err.to_string());
+            return Err(err);
+        }
+    };
     if proxy_provider::is_proxy_model(&model) {
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
             Err(err) => {
+                hold.release().await;
                 #[cfg(feature = "capture")]
                 tap.finish_err(err.to_string());
                 return Err(err);
@@ -846,6 +978,7 @@ pub async fn proxy_completion_stream(
             target,
             request_id,
             user_id,
+            hold,
             #[cfg(feature = "capture")]
             tap,
         )
@@ -861,7 +994,7 @@ pub async fn proxy_completion_stream(
         tap.set_request(&request);
     }
 
-    let (byte_stream, model_ref) = proxy_chat_stream(
+    let (byte_stream, model_ref) = match proxy_chat_stream(
         http,
         credentials.as_ref(),
         &body.completion.messages,
@@ -870,11 +1003,15 @@ pub async fn proxy_completion_stream(
         &request_id,
     )
     .await
-    .map_err(|e| {
-        #[cfg(feature = "capture")]
-        tap.finish_err(e.to_string());
-        chat_error_to_gateway(e)
-    })?;
+    {
+        Ok(value) => value,
+        Err(error) => {
+            hold.release().await;
+            #[cfg(feature = "capture")]
+            tap.finish_err(error.to_string());
+            return Err(chat_error_to_gateway(error));
+        }
+    };
 
     let is_anthropic = model_ref.provider == ProviderId::Anthropic;
     let key_id = auth.key_id.clone();
@@ -885,6 +1022,7 @@ pub async fn proxy_completion_stream(
     let (tx, rx) = mpsc::channel(GATEWAY_STREAM_BUFFER);
 
     tokio::spawn(async move {
+        let mut hold = hold;
         let mut stream = byte_stream;
         let mut parser = SseParser::new();
         let mut round_usage: Option<proto::Usage> = None;
@@ -918,12 +1056,14 @@ pub async fn proxy_completion_stream(
                         }
                     }
                     if tx.send(Ok(bytes)).await.is_err() {
+                        hold.release().await;
                         #[cfg(feature = "capture")]
                         tap.finish(None, None);
                         return;
                     }
                 }
                 Err(e) => {
+                    hold.release().await;
                     #[cfg(feature = "capture")]
                     tap.finish_err(e.to_string());
                     let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
@@ -942,7 +1082,7 @@ pub async fn proxy_completion_stream(
                 generation_id.as_deref(),
             )
             .await;
-            let _ = record_usage_async(
+            let recorded = record_usage_async(
                 &db,
                 key_id.as_deref(),
                 &user_id,
@@ -951,10 +1091,17 @@ pub async fn proxy_completion_stream(
                 cost,
                 &request_id,
             )
-            .await;
+            .await
+            .is_ok();
+            if recorded {
+                hold.disarm();
+            } else {
+                hold.release().await;
+            }
             #[cfg(feature = "capture")]
             tap.finish(Some(&usage), Some(cost));
         } else {
+            hold.release().await;
             #[cfg(feature = "capture")]
             tap.finish(None, None);
         }
@@ -1033,6 +1180,7 @@ async fn forward_proxy_response(
     target: ProxyTarget,
     request_id: String,
     user_id: String,
+    mut hold: BudgetGuard,
     #[cfg(feature = "capture")] mut tap: CaptureTap,
 ) -> GatewayResult<(Value, String)> {
     if let Err(err) = reject_proxy_embedding(&target) {
@@ -1047,6 +1195,7 @@ async fn forward_proxy_response(
     let val = match post_proxy_json(state, &target, "/v1/responses", &upstream).await {
         Ok(val) => val,
         Err(err) => {
+            hold.release().await;
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
@@ -1060,7 +1209,7 @@ async fn forward_proxy_response(
     if let Some(usage) = val.get("usage") {
         let proto_usage = usage_from_responses_json(usage);
         let cost = proxy_recorded_cost(&proto_usage);
-        record_usage_async(
+        if let Err(error) = record_usage_async(
             &state.db,
             auth.key_id.as_deref(),
             &user_id,
@@ -1069,10 +1218,16 @@ async fn forward_proxy_response(
             cost,
             &request_id,
         )
-        .await?;
+        .await
+        {
+            hold.release().await;
+            return Err(error);
+        }
+        hold.disarm();
         #[cfg(feature = "capture")]
         tap.finish(Some(&proto_usage), Some(cost));
     } else {
+        hold.release().await;
         #[cfg(feature = "capture")]
         tap.finish(None, None);
     }
@@ -1086,6 +1241,7 @@ async fn forward_proxy_completion(
     target: ProxyTarget,
     request_id: String,
     user_id: String,
+    mut hold: BudgetGuard,
     #[cfg(feature = "capture")] mut tap: CaptureTap,
 ) -> GatewayResult<(Value, String)> {
     if let Err(err) = reject_proxy_embedding(&target) {
@@ -1101,6 +1257,7 @@ async fn forward_proxy_completion(
     let val = match post_proxy_json(state, &target, "/v1/chat/completions", &upstream).await {
         Ok(val) => val,
         Err(err) => {
+            hold.release().await;
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
@@ -1113,7 +1270,7 @@ async fn forward_proxy_completion(
     }
     if let Some(extracted) = usage_from_chat_response(&val) {
         let cost = proxy_recorded_cost(&extracted.usage);
-        record_usage_async(
+        if let Err(error) = record_usage_async(
             &state.db,
             auth.key_id.as_deref(),
             &user_id,
@@ -1122,10 +1279,16 @@ async fn forward_proxy_completion(
             cost,
             &request_id,
         )
-        .await?;
+        .await
+        {
+            hold.release().await;
+            return Err(error);
+        }
+        hold.disarm();
         #[cfg(feature = "capture")]
         tap.finish(Some(&extracted.usage), Some(cost));
     } else {
+        hold.release().await;
         #[cfg(feature = "capture")]
         tap.finish(None, None);
     }
@@ -1139,6 +1302,7 @@ async fn forward_proxy_response_stream(
     target: ProxyTarget,
     request_id: String,
     user_id: String,
+    hold: BudgetGuard,
     #[cfg(feature = "capture")] mut tap: CaptureTap,
 ) -> GatewayResult<ReceiverStream<Result<bytes::Bytes, std::io::Error>>> {
     if let Err(err) = reject_proxy_embedding(&target) {
@@ -1153,6 +1317,7 @@ async fn forward_proxy_response_stream(
     let byte_stream = match post_proxy_stream(state, &target, "/v1/responses", &upstream).await {
         Ok(stream) => stream,
         Err(err) => {
+            hold.release().await;
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
@@ -1166,6 +1331,7 @@ async fn forward_proxy_response_stream(
         target.raw,
         request_id,
         true,
+        hold,
         #[cfg(feature = "capture")]
         tap,
     ))
@@ -1178,6 +1344,7 @@ async fn forward_proxy_completion_stream(
     target: ProxyTarget,
     request_id: String,
     user_id: String,
+    hold: BudgetGuard,
     #[cfg(feature = "capture")] mut tap: CaptureTap,
 ) -> GatewayResult<ReceiverStream<Result<bytes::Bytes, std::io::Error>>> {
     if let Err(err) = reject_proxy_embedding(&target) {
@@ -1194,6 +1361,7 @@ async fn forward_proxy_completion_stream(
         match post_proxy_stream(state, &target, "/v1/chat/completions", &upstream).await {
             Ok(stream) => stream,
             Err(err) => {
+                hold.release().await;
                 #[cfg(feature = "capture")]
                 tap.finish_err(err.to_string());
                 return Err(err);
@@ -1207,6 +1375,7 @@ async fn forward_proxy_completion_stream(
         target.raw,
         request_id,
         false,
+        hold,
         #[cfg(feature = "capture")]
         tap,
     ))
@@ -1222,10 +1391,12 @@ fn spawn_proxy_sse(
     model_raw: String,
     request_id: String,
     responses: bool,
+    hold: BudgetGuard,
     #[cfg(feature = "capture")] mut tap: CaptureTap,
 ) -> ReceiverStream<Result<bytes::Bytes, std::io::Error>> {
     let (tx, rx) = mpsc::channel(GATEWAY_STREAM_BUFFER);
     tokio::spawn(async move {
+        let mut hold = hold;
         let mut stream = std::pin::pin!(byte_stream);
         let mut parser = SseParser::new();
         let mut round_usage: Option<proto::Usage> = None;
@@ -1254,12 +1425,14 @@ fn spawn_proxy_sse(
                         }
                     }
                     if tx.send(Ok(bytes)).await.is_err() {
+                        hold.release().await;
                         #[cfg(feature = "capture")]
                         tap.finish(None, None);
                         return;
                     }
                 }
                 Err(err) => {
+                    hold.release().await;
                     #[cfg(feature = "capture")]
                     tap.finish_err(err.to_string());
                     let _ = tx.send(Err(std::io::Error::other(err.to_string()))).await;
@@ -1269,7 +1442,7 @@ fn spawn_proxy_sse(
         }
         if let Some(usage) = round_usage {
             let cost = proxy_recorded_cost(&usage);
-            let _ = record_usage_async(
+            let recorded = record_usage_async(
                 &db,
                 key_id.as_deref(),
                 &user_id,
@@ -1278,10 +1451,17 @@ fn spawn_proxy_sse(
                 cost,
                 &request_id,
             )
-            .await;
+            .await
+            .is_ok();
+            if recorded {
+                hold.disarm();
+            } else {
+                hold.release().await;
+            }
             #[cfg(feature = "capture")]
             tap.finish(Some(&usage), Some(cost));
         } else {
+            hold.release().await;
             #[cfg(feature = "capture")]
             tap.finish(None, None);
         }
