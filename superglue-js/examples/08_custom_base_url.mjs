@@ -20,7 +20,7 @@ async function main() {
     (apiKey.startsWith("sk-") ? "https://api.openai.com" : "http://localhost:11434");
   const model =
     process.env.OPENAI_MODEL ??
-    (apiKey.startsWith("sk-") ? "gpt-4o-mini" : "llama3.2");
+    (apiKey.startsWith("sk-") ? "gpt-6-luna" : "llama3.2");
 
   console.log(`Using model '${model}' at ${baseUrl}\n`);
 

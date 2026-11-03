@@ -49,7 +49,7 @@ def get_company_info(
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     system_prompt=(
         "You are a financial assistant. "
         "Always use the available tools to retrieve real data before answering."
@@ -61,7 +61,8 @@ client.register_tool(get_company_info)
 
 result = client.complete(
     "Give me a brief summary of Apple (AAPL) — current price, today's change, "
-    "and a couple of key company facts."
+    "and a couple of key company facts.",
+    reasoning_effort="none",
 )
 
 print(result.content)

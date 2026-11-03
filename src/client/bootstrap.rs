@@ -84,10 +84,19 @@ pub fn bootstrap_from_parts(
         return Err(ClientBuildError::MissingApiKey);
     }
 
-    let mut creds = config
-        .provider_credentials
-        .unwrap_or_else(ProviderCredentials::from_env);
-    creds.with_legacy_openai_key(&api_key, Some(&config.base_url));
+    // No provider map: the constructor key is explicit and replaces OPENAI_API_KEY.
+    // A provider map already applied its own OpenAI entry, so only fill gaps.
+    let creds = match config.provider_credentials {
+        Some(mut creds) => {
+            creds.with_legacy_openai_key(&api_key, Some(&config.base_url));
+            creds
+        }
+        None => {
+            let mut creds = ProviderCredentials::from_env();
+            creds.replace_openai_key_from_constructor(&api_key, Some(&config.base_url));
+            creds
+        }
+    };
 
     let rate_limit_registry =
         if let Some(qps) = config.requests_per_second.and_then(NonZeroU32::new) {
@@ -144,4 +153,59 @@ pub fn bootstrap_from_parts(
 /// Parse provider name strings (`openai`, `anthropic`, …) for binding maps.
 pub fn provider_id_from_str(s: &str) -> Option<ProviderId> {
     s.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use secrecy::ExposeSecret;
+
+    use super::*;
+    use crate::providers::ProviderId;
+
+    #[test]
+    fn constructor_api_key_overrides_openai_env() {
+        let previous = std::env::var("OPENAI_API_KEY").ok();
+        // SAFETY: this test restores the variable before it returns.
+        // Run it alone so other tests do not read the key mid-update.
+        unsafe { std::env::set_var("OPENAI_API_KEY", "sk-from-env") };
+        let result = bootstrap_from_parts(BindingBootstrapConfig {
+            api_key: "sk-invalid-key".into(),
+            ..BindingBootstrapConfig::default()
+        });
+        unsafe {
+            match &previous {
+                Some(value) => std::env::set_var("OPENAI_API_KEY", value),
+                None => std::env::remove_var("OPENAI_API_KEY"),
+            }
+        }
+        let bootstrap = result.expect("client builds");
+        let creds = bootstrap.options.provider_credentials.expect("credentials");
+        assert_eq!(
+            creds
+                .key_for(ProviderId::OpenAi)
+                .expect("openai key")
+                .expose_secret(),
+            "sk-invalid-key"
+        );
+    }
+
+    #[test]
+    fn explicit_provider_openai_key_beats_constructor_key() {
+        let mut explicit = ProviderCredentials::new();
+        explicit.insert_key(ProviderId::OpenAi, "sk-from-map");
+        let bootstrap = bootstrap_from_parts(BindingBootstrapConfig {
+            api_key: "sk-constructor".into(),
+            provider_credentials: Some(explicit),
+            ..BindingBootstrapConfig::default()
+        })
+        .expect("client builds");
+        let creds = bootstrap.options.provider_credentials.expect("credentials");
+        assert_eq!(
+            creds
+                .key_for(ProviderId::OpenAi)
+                .expect("openai key")
+                .expose_secret(),
+            "sk-from-map"
+        );
+    }
 }

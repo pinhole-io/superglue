@@ -14,7 +14,7 @@ if (!apiKey) {
 
 const client = createClient({
   apiKey,
-  model: process.env.OPENAI_MODEL ?? "openai:gpt-4o-mini",
+  model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
   systemPrompt: "You are a helpful assistant. Use tools when needed.",
   toolMode: "dynamic",
   condenseToolMessages: true,
@@ -50,7 +50,13 @@ await registerTool(client, {
   staticTool: true,
 });
 
-const result = await client.complete("What's the weather in Paris?");
+const result = await client.complete(
+  "What's the weather in Paris?",
+  undefined,
+  undefined,
+  undefined,
+  "none",
+);
 console.log("content:", result.content);
 console.log("rounds:", result.rounds);
 

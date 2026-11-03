@@ -19,7 +19,7 @@ if (process.env.ANTHROPIC_API_KEY) {
   console.log("ANTHROPIC_API_KEY not set — skipping anthropic model.");
 }
 
-const models = ["openai:gpt-4o-mini"];
+const models = ["openai:gpt-6-luna"];
 if (apiKeys.anthropic) {
   models.push("anthropic:claude-sonnet-4-20250514");
 }

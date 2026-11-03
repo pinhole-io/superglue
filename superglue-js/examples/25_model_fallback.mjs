@@ -12,7 +12,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const primary = process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini";
+const primary = process.env.OPENAI_MODEL ?? "gpt-6-luna";
 const backup = process.env.OPENAI_FALLBACK_MODEL ?? primary;
 
 const client = createClient({

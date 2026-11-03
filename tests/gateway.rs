@@ -1702,6 +1702,70 @@ async fn audio_transcription_enforces_model_allowlist() {
 }
 
 #[tokio::test]
+async fn virtual_key_proxies_xai_file_transcription() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stt"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "text": "hello",
+            "language": "en",
+            "duration": 0.4,
+            "words": [{"text": "hello", "start": 0.0, "end": 0.4}]
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_provider(
+        MASTER_KEY,
+        &dir.path().join("gw.db"),
+        ProviderId::Xai,
+        &server.uri(),
+        "xai-test",
+    );
+    let app = router(state);
+    let virtual_key = setup_virtual_key(app.clone(), &["xai:*"]).await;
+
+    let resp = app
+        .oneshot(multipart_request(
+            "/v1/audio/transcriptions",
+            &virtual_key,
+            "xai:grok-voice-transcribe-2.0",
+            "clip.wav",
+            b"RIFF",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_to_json(resp.into_body()).await;
+    assert_eq!(body["text"], "hello");
+    assert_eq!(body["language"], "en");
+    assert_eq!(body["duration"], 0.4);
+    assert_eq!(body["words"][0]["word"], "hello");
+    assert!(body["words"][0].get("text").is_none());
+}
+
+#[tokio::test]
+async fn xai_file_transcription_enforces_model_allowlist() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(MASTER_KEY, &dir.path().join("gw.db"));
+    let app = router(state);
+    let virtual_key = setup_virtual_key(app.clone(), &["openai:*"]).await;
+
+    let resp = app
+        .oneshot(multipart_request(
+            "/v1/audio/transcriptions",
+            &virtual_key,
+            "xai:grok-voice-transcribe-2.0",
+            "clip.wav",
+            b"RIFF",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn virtual_key_proxies_embeddings() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

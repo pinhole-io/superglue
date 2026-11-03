@@ -14,7 +14,7 @@ if (!apiKey) {
 
 const client = createClient({
   apiKey,
-  model: process.env.OPENAI_MODEL ?? "openai:gpt-4o-mini",
+  model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
 });
 
 await registerTool(client, {
@@ -33,5 +33,9 @@ const out = await client.stream(
       process.stdout.write(t);
     }
   },
+  undefined,
+  undefined,
+  undefined,
+  "none",
 );
 console.log("\nfinish:", out.finishReason);

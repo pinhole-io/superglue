@@ -26,7 +26,7 @@ if base_url is None:
     )
 model = os.environ.get(
     "OPENAI_MODEL",
-    "gpt-4o-mini" if api_key.startswith("sk-") else "llama3.2",
+    "gpt-6-luna" if api_key.startswith("sk-") else "llama3.2",
 )
 
 print(f"Using model '{model}' at {base_url}\n")

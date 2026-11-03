@@ -37,7 +37,7 @@ print()
 # High fan-out: explicit pool sizing (same knobs as gluellm httpx limits)
 pooled_client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     connect_timeout_secs=30,
     pool_max_idle_per_host=50,
     timeout_secs=90,

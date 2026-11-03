@@ -1,4 +1,7 @@
-//! Offline file transcription via OpenAI-compatible `/v1/audio/transcriptions`.
+//! Offline file transcription.
+//!
+//! OpenAI and Groq use `/v1/audio/transcriptions`.
+//! xAI uses `/v1/stt`.
 
 use secrecy::ExposeSecret;
 use serde::Deserialize;
@@ -40,10 +43,13 @@ pub enum TranscribeError {
     Serde(#[from] serde_json::Error),
 }
 
-/// Providers that expose OpenAI-compatible file transcription.
+/// Providers that expose file transcription.
 #[must_use]
 pub fn supports_transcription(provider: ProviderId) -> bool {
-    matches!(provider, ProviderId::OpenAi | ProviderId::Groq)
+    matches!(
+        provider,
+        ProviderId::OpenAi | ProviderId::Groq | ProviderId::Xai
+    )
 }
 
 /// Pick a file-STT provider from credentials.
@@ -63,14 +69,26 @@ pub fn transcription_provider(
         .find(|provider| credentials.has_key(*provider))
 }
 
-/// Path for file transcription.
+/// Upstream path for a provider's own transcription API.
 ///
-/// Direct provider APIs use `/v1/audio/transcriptions`.
-/// A non-default base URL (the SuperGlue gateway) uses `/v1/speech/transcriptions`.
+/// OpenAI and Groq use `/v1/audio/transcriptions`. xAI uses `/v1/stt`.
+#[must_use]
+pub fn provider_transcription_path(provider: ProviderId) -> &'static str {
+    match provider {
+        ProviderId::Xai => "/v1/stt",
+        _ => "/v1/audio/transcriptions",
+    }
+}
+
+/// Path for file transcription from this process.
+///
+/// The provider default base URL uses [`provider_transcription_path`].
+/// Any other base URL uses `/v1/speech/transcriptions`, so a hop through this
+/// gateway does not call the provider path on itself.
 #[must_use]
 pub fn transcriptions_path(base_url: &str, provider: ProviderId) -> &'static str {
     if base_url == provider.default_base_url() {
-        "/v1/audio/transcriptions"
+        provider_transcription_path(provider)
     } else {
         "/v1/speech/transcriptions"
     }
@@ -82,6 +100,7 @@ pub fn default_transcription_model(provider: ProviderId) -> Option<&'static str>
     match provider {
         ProviderId::OpenAi => Some("whisper-1"),
         ProviderId::Groq => Some("whisper-large-v3"),
+        ProviderId::Xai => Some("grok-voice-transcribe-2.0"),
         _ => None,
     }
 }
@@ -112,11 +131,15 @@ pub async fn transcribe(
     let rate_limit_key = rate_limit_key_for(&model_ref, credentials)?;
     let auth = format!("Bearer {}", key.expose_secret());
     let wire_model = wire_model_id(&model_ref, &base_url, provider);
-    let fields = [
-        ("model", wire_model.as_str()),
-        ("response_format", "verbose_json"),
-        ("timestamp_granularities[]", "word"),
-    ];
+    let fields: Vec<(&str, &str)> = if provider == ProviderId::Xai {
+        vec![("model", wire_model.as_str())]
+    } else {
+        vec![
+            ("model", wire_model.as_str()),
+            ("response_format", "verbose_json"),
+            ("timestamp_granularities[]", "word"),
+        ]
+    };
 
     let value = http
         .post_multipart_with_fields(
@@ -157,6 +180,9 @@ struct VerboseTranscriptResponse {
 struct VerboseWord {
     #[serde(default)]
     word: String,
+    /// xAI names the token `text`. OpenAI names it `word`.
+    #[serde(default)]
+    text: String,
     #[serde(default)]
     start: f64,
     #[serde(default)]
@@ -190,6 +216,7 @@ fn parse_verbose_transcript(value: serde_json::Value) -> Result<Transcript, Tran
                 if segment.words.is_empty() {
                     word_from_verbose(VerboseWord {
                         word: segment.text.clone(),
+                        text: String::new(),
                         start: segment.start,
                         end: segment.end,
                     })
@@ -213,7 +240,11 @@ fn parse_verbose_transcript(value: serde_json::Value) -> Result<Transcript, Tran
 }
 
 fn word_from_verbose(word: VerboseWord) -> Option<TranscriptWord> {
-    let text = word.word.trim();
+    let text = if word.word.trim().is_empty() {
+        word.text.trim()
+    } else {
+        word.word.trim()
+    };
     if text.is_empty() {
         return None;
     }
@@ -231,9 +262,10 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn openai_and_groq_support_transcription() {
+    fn openai_groq_and_xai_support_transcription() {
         assert!(supports_transcription(ProviderId::OpenAi));
         assert!(supports_transcription(ProviderId::Groq));
+        assert!(supports_transcription(ProviderId::Xai));
         assert!(!supports_transcription(ProviderId::Anthropic));
     }
 
@@ -248,6 +280,31 @@ mod tests {
         assert_eq!(
             transcriptions_path("https://gateway.myharn.sh", ProviderId::OpenAi),
             "/v1/speech/transcriptions"
+        );
+        assert_eq!(
+            transcriptions_path(ProviderId::Xai.default_base_url(), ProviderId::Xai),
+            "/v1/stt"
+        );
+        assert_eq!(
+            transcriptions_path("https://gateway.myharn.sh", ProviderId::Xai),
+            "/v1/speech/transcriptions"
+        );
+    }
+
+    #[test]
+    fn xai_is_not_a_transcription_fallback() {
+        use super::transcription_provider;
+        use crate::providers::ProviderCredentials;
+
+        let mut only_xai = ProviderCredentials::new();
+        only_xai.insert_key(ProviderId::Xai, "xai-key");
+        assert_eq!(
+            transcription_provider(ProviderId::Xai, &only_xai),
+            Some(ProviderId::Xai)
+        );
+        assert_eq!(
+            transcription_provider(ProviderId::OpenRouter, &only_xai),
+            None
         );
     }
 
@@ -300,5 +357,22 @@ mod tests {
         }))
         .expect("parse");
         assert_eq!(transcript.words[0].text, "hi");
+    }
+
+    #[test]
+    fn parse_reads_xai_word_text() {
+        let transcript = parse_verbose_transcript(json!({
+            "text": "hello world",
+            "language": "en",
+            "duration": 1.2,
+            "words": [
+                {"text": "hello", "start": 0.1, "end": 0.4},
+                {"text": "world", "start": 0.5, "end": 0.9}
+            ]
+        }))
+        .expect("parse");
+        assert_eq!(transcript.text, "hello world");
+        assert_eq!(transcript.words[0].text, "hello");
+        assert_eq!(transcript.words[1].start, 0.5);
     }
 }

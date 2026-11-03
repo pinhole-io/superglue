@@ -5,7 +5,7 @@ Numbered examples match [`../superglue-py/examples/`](../superglue-py/examples/)
 ## Prerequisites
 
 Export `OPENAI_API_KEY` before a live example.
-`OPENAI_MODEL` overrides the helper default `gpt-5.4-nano`.
+`OPENAI_MODEL` overrides the helper default `gpt-6-luna`.
 A bare model id uses OpenAI.
 
 From this crate:
@@ -25,44 +25,45 @@ Set `OPENAI_BASE_URL` yourself when you want a specific host. See `08_custom_bas
 
 | # | Topic | Rust | Python | JavaScript | Kotlin test |
 | --- | --- | --- | --- | --- | --- |
-| 01 | Simple completion | yes | yes | yes | |
-| 02 | System prompt | yes | yes | yes | |
-| 03 | Single tool | yes | yes | yes | |
-| 04 | Multiple tools | yes | yes | yes | |
-| 05 | Usage tracking | yes | yes | yes | |
-| 06 | Error handling | yes | yes | yes | |
-| 07 | Max tool rounds | yes | yes | yes | |
-| 08 | Custom base URL | yes | yes | yes | |
-| 09 | Concurrent completions | yes | yes | yes | |
-| 10 | Structured data tool | yes | yes | yes | |
-| 11 | Streaming | yes | yes | yes | |
-| 12 | Streaming accumulate | yes | yes | yes | |
-| 13 | Concurrent streams | yes | yes | yes | |
-| 14 | Streaming vs buffered | yes | yes | yes | |
-| 15 | Rate limiting | yes | yes | yes | |
-| 16 | Retry configuration | yes | yes | yes | |
-| 17 | Batch completions | yes | yes | yes | |
-| 18 | Hooks | yes | yes | yes | |
-| 19 | Guardrails | yes | yes | yes | |
-| 20 | Agents | yes | yes | yes | |
-| 21 | Executors | stub | yes | stub | |
+| 01 | Simple completion | yes | yes | yes | `example01_simple_completion` |
+| 02 | System prompt | yes | yes | yes | `example02_system_prompt` |
+| 03 | Single tool | yes | yes | yes | `example03_single_tool` |
+| 04 | Multiple tools | yes | yes | yes | `example04_multiple_tools` |
+| 05 | Usage tracking | yes | yes | yes | `example05_usage_tracking` |
+| 06 | Error handling | yes | yes | yes | `example06_error_handling` |
+| 07 | Max tool rounds | yes | yes | yes | `example07_max_tool_rounds` |
+| 08 | Custom base URL | yes | yes | yes | `example08_custom_base_url` |
+| 09 | Concurrent completions | yes | yes | yes | `example09_concurrent_completions` |
+| 10 | Structured data tool | yes | yes | yes | `example10_structured_data_tool` |
+| 11 | Streaming | yes | yes | yes | `example11_streaming` |
+| 12 | Streaming accumulate | yes | yes | yes | `example12_streaming_accumulate` |
+| 13 | Concurrent streams | yes | yes | yes | `example13_concurrent_streams` |
+| 14 | Streaming vs buffered | yes | yes | yes | `example14_streaming_vs_buffered` |
+| 15 | Rate limiting | yes | yes | yes | `example15_rate_limiting` |
+| 16 | Retry configuration | yes | yes | yes | `example16_retry_configuration` |
+| 17 | Batch completions | yes | yes | yes | `example17_batch_completions` |
+| 18 | Hooks | yes | yes | yes | `example18_hooks` |
+| 19 | Guardrails | yes | yes | yes | `example19_guardrails` |
+| 20 | Agents | yes | yes | yes | `example20_agents` |
+| 21 | Executors | stub | yes | stub | stub |
 | 22 | Status events | yes | yes | yes | `example22_status_events` |
 | 23 | Reasoning effort | yes | yes | yes | `example23_reasoning_effort` |
 | 24 | Connection pool | yes | yes | yes | `example24_connection_pool_defaults` |
 | 25 | Model fallback | yes | yes | yes | `example25_model_fallback` |
 | 26 | Stream response | yes | yes | yes | `example26_stream_response` |
 | 27 | Response threading | yes | yes | yes | `example27_complete_response` |
-| 28 | MCP tools | yes | yes | yes | |
+| 28 | MCP tools | yes | yes | yes | `example28_mcp_tools` |
 | 29 | Multi-provider | yes | yes | yes | `example29_multi_provider` |
 | 30 | Streaming tools | yes | yes | yes | `example30_streaming_tools` |
 | 31 | File upload | yes | yes | yes | `example31_file_upload_inline` |
-| 32 | Context optimization | yes | yes | yes | |
+| 32 | Context optimization | yes | yes | yes | `example32_context_optimization` |
 | 33 | Context benchmark, wiremock | yes | | | |
-| 34 | Context benchmark, live API | yes | | | |
-| 35 | Code tool mode | yes | yes | yes | |
+| 34 | Context benchmark, live API | yes | yes | yes | `example34_context_optimization_live` |
+| 35 | Code tool mode | yes | yes | yes | `example35_code_tool_mode` |
 | 36 | Realtime voice | yes | | | |
-| 37 | TypeSafe System One | yes | | | |
-| demo | Short demo | yes | yes | yes | |
+| 37 | TypeSafe System One | yes | yes | yes | `example37_systemone` |
+| 38 | File transcription | yes | | | |
+| demo | Short demo | yes | yes | yes | `example_demo` |
 
 Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
 
@@ -70,10 +71,11 @@ Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
 | --- | --- |
 | `28_mcp_tools` | `--features mcp`. Set `MCP_RUN=1` for a live server. |
 | `33_context_optimization_benchmark` | No API key. Wiremock. |
-| `34_context_optimization_live_benchmark` | `OPENAI_API_KEY` and `OPENAI_MODEL` |
+| `34_context_optimization_live_benchmark` | `OPENAI_API_KEY` and `OPENAI_MODEL`. Python, JavaScript, and Kotlin compare two configs on one prompt. The Rust file also runs the fat-payload and multi-turn matrix. |
 | `35_code_tool_mode` | `--features code` |
 | `36_realtime_voice` | `--features realtime` and `XAI_API_KEY` |
 | `37_systemone` | `TYPESAFE_API_KEY` |
+| `38_file_transcription` | `XAI_API_KEY`. Uses `examples/sample.mp3` unless you pass another path. Set `SUPERGLUE_STT_PROVIDER` to `openai` or `groq` for those keys. |
 
 ## Rust `Client`
 
@@ -83,5 +85,13 @@ Shared helpers live in `examples/support/mod.rs`.
 ## Example 21
 
 `SimpleExecutor`, `AgentExecutor`, and `AgentStructuredExecutor` exist only in Python.
-The Rust and JavaScript files print that fact.
+The Rust file, the JavaScript file, and the Kotlin test `example21_executors` record that fact.
 The Python script is [`../superglue-py/examples/21_executors.py`](../superglue-py/examples/21_executors.py).
+
+## Rust-only rows
+
+Python, JavaScript, and Kotlin have no API for these rows.
+
+- **33** drives Wiremock through `benches/support`.
+- **36** uses `VoiceSession` from the `realtime` feature.
+- **38** calls `audio::transcribe`.

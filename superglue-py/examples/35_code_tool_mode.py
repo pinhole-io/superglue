@@ -30,7 +30,7 @@ def get_time() -> dict:
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     system_prompt=(
         "You are a helpful assistant. Call request_tools first, then use the code "
         "tool to invoke matched tools from JavaScript (tools.<name>(args))."
@@ -42,6 +42,9 @@ client.register_tool(get_weather)
 client.register_tool(calculate)
 client.register_tool(get_time, static_tool=True)
 
-outcome = client.complete("What's the weather in Paris? Return only the temperature.")
+outcome = client.complete(
+    "What's the weather in Paris? Return only the temperature.",
+    reasoning_effort="none",
+)
 print("content:", outcome.content)
 print("rounds:", outcome.rounds)

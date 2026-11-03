@@ -19,7 +19,7 @@ import superglue
 from superglue import BatchRequest
 
 API_KEY = os.environ.get("OPENAI_API_KEY", "sk-...")
-MODEL = os.environ.get("MODEL", "gpt-5.4-nano-2026-03-17-mini")
+MODEL = os.environ.get("MODEL", "gpt-6-luna")
 
 client = superglue.Client(
     api_key=API_KEY,

@@ -26,7 +26,7 @@ if not api_key:
 # upstream provider imposes a QPS quota you want to stay safely under.
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     requests_per_second=2,
 )
 

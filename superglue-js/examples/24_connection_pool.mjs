@@ -25,7 +25,7 @@ if (!apiKey) {
 
 const pooledClient = createClient({
   apiKey,
-  model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+  model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
   connectTimeoutSecs: 30,
   poolMaxIdlePerHost: 50,
   timeoutSecs: 90,

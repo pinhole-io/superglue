@@ -18,7 +18,7 @@ if not api_key:
     print("Set OPENAI_API_KEY to run this example.")
     raise SystemExit(1)
 
-model = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+model = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 emitter = superglue.StatusEmitter()
 metrics: dict[str, float | int] = {"cost_usd": 0.0, "calls": 0}

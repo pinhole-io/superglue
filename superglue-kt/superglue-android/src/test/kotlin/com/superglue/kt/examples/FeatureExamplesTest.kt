@@ -20,7 +20,7 @@ import org.junit.Test
  */
 class FeatureExamplesTest {
     private val apiKey = System.getenv("OPENAI_API_KEY").orEmpty()
-    private val model = System.getenv("OPENAI_MODEL") ?: "gpt-5.4-nano-2026-03-17-mini"
+    private val model = System.getenv("OPENAI_MODEL") ?: "gpt-6-luna"
 
     @Test
     fun example22_status_events() {
@@ -205,6 +205,8 @@ class FeatureExamplesTest {
                 ClientConfig(
                     apiKey = apiKey,
                     model = model,
+                    // stream() has no per-call reasoningEffort argument.
+                    reasoningEffort = "none",
                 ),
             )
         client.registerTool(

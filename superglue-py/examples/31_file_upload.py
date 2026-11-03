@@ -10,7 +10,7 @@ if not api_key:
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "openai:gpt-4o-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
 )
 
 sample = b"""%PDF-1.4

@@ -58,7 +58,7 @@ def calculate(
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     system_prompt="You are a versatile assistant. Use tools whenever helpful.",
 )
 
@@ -68,7 +68,8 @@ client.register_tool(calculate)
 
 # Ask something that might need several tools.
 result = client.complete(
-    "What's the weather in London, and what is 2 to the power of 16?"
+    "What's the weather in London, and what is 2 to the power of 16?",
+    reasoning_effort="none",
 )
 
 print("content:", result.content)

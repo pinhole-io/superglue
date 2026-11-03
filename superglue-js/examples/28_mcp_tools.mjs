@@ -19,7 +19,7 @@ if (!apiKey) {
 
 const client = createClient({
   apiKey,
-  model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+  model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
 });
 
 await client.connectMcpStdio(
@@ -31,5 +31,9 @@ await client.connectMcpStdio(
 
 const result = await client.complete(
   "Name one available tool with the mcp__ prefix. One line only.",
+  undefined,
+  undefined,
+  undefined,
+  "none",
 );
 console.log("content:", result.content);

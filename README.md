@@ -12,7 +12,7 @@ SuperGlue talks to model providers, runs tool calling, streams tokens, and recor
 
 [Quick start](#quick-start) · [Install](#install) · [Providers](docs/multi-provider.md) · [Gateway](_docs/12-llm-gateway.md) · [Examples](examples/README.md) · [Design notes](_docs/README.md)
 
-> Release `1.0.0`. The workflow engine is on the [roadmap](_docs/09-roadmap-and-phasing.md).
+> Release `1.1.0`. The workflow engine is on the [roadmap](_docs/09-roadmap-and-phasing.md).
 
 ## Contents
 
@@ -63,7 +63,7 @@ superglue = { git = "https://github.com/pinhole-io/superglue" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Pin a release with `tag = "v1.0.0"`. Enable a feature in the same dependency:
+Pin a release with `tag = "v1.1.0"`. Enable a feature in the same dependency:
 
 ```toml
 superglue = { git = "https://github.com/pinhole-io/superglue", features = ["gateway"] }
@@ -121,17 +121,17 @@ Add the Android library from Maven Central:
 
 ```kotlin
 dependencies {
-    implementation("com.superglue.kt:superglue-android:1.0.0")
+    implementation("com.superglue.kt:superglue-android:1.1.0")
 }
 ```
 
-The AAR contains `arm64-v8a` and `x86_64`. Each GitHub release also stores `superglue-android-1.0.0.aar`.
+The AAR contains `arm64-v8a` and `x86_64`. Each GitHub release also stores `superglue-android-1.1.0.aar`.
 
 A file dependency does not pull AndroidX or kotlinx. Add those libraries yourself, or include the `:superglue-android` module from this repository.
 
 ```kotlin
 dependencies {
-    implementation(files("libs/superglue-android-1.0.0.aar"))
+    implementation(files("libs/superglue-android-1.1.0.aar"))
 }
 ```
 
@@ -242,7 +242,7 @@ Each tool can use `FailFast`, `Skip`, or `Retry`. One round can dispatch several
 | Conversations | `Client::conversation` keeps turns. Rust `push_user_message` accepts file and image parts. |
 | Voice | Duplex sessions on xAI when you enable `realtime` |
 | System One | TypeSafe checks through `Client::system_one` and gateway `POST /v1/systemone` |
-| Transcription | OpenAI and Groq file transcription. Gateway paths are under `/v1/audio` and `/v1/speech`. |
+| Transcription | OpenAI, Groq, and xAI file transcription. Gateway paths are under `/v1/audio` and `/v1/speech`. |
 | Observability | `tracing` with redaction. Optional OTLP and Prometheus. |
 | Servers | gRPC sidecar (`grpc`) and an OpenAI-compatible HTTP gateway (`gateway`) |
 | Bindings | Python (PyO3), Node.js (napi-rs), Kotlin (JNI) |
@@ -366,6 +366,7 @@ cargo run --example 29_multi_provider
 cargo run --example 28_mcp_tools --features mcp
 cargo run --example 35_code_tool_mode --features code
 cargo run --example 36_realtime_voice --features realtime
+cargo run --example 38_file_transcription
 ```
 
 | Goal | Example |
@@ -383,6 +384,7 @@ cargo run --example 36_realtime_voice --features realtime
 | Context benchmarks | `33_context_optimization_benchmark`, `34_context_optimization_live_benchmark` |
 | MCP tools | `28_mcp_tools` |
 | Voice | `36_realtime_voice` |
+| File transcription | `38_file_transcription` |
 | TypeSafe System One | `37_systemone` |
 
 The full parity table is in [examples/README.md](examples/README.md).

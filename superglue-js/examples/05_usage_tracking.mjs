@@ -14,7 +14,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const model = process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini";
+const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
 
 const emitter = new StatusEmitterJs();
 const metrics = { costUsd: 0, calls: 0 };

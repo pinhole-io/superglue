@@ -38,7 +38,7 @@ function envOpenAiModel() {
     return proc?.env?.OPENAI_MODEL;
 }
 function createClient(options) {
-    const model = options.model ?? envOpenAiModel();
+    const model = options.model ?? envOpenAiModel() ?? "gpt-6-luna";
     return new index_js_1.Client(options.apiKey, model, options.baseUrl, options.systemPrompt ?? undefined, options.maxToolRounds ?? undefined, options.maxRetries ?? undefined, options.retryInitialDelayMs ?? undefined, options.retryMaxDelayMs ?? undefined, options.retryMultiplier ?? undefined, options.requestsPerSecond ?? undefined, options.timeoutSecs ?? undefined, options.connectTimeoutSecs ?? undefined, options.maxOutputRetries ?? undefined, options.poolMaxIdlePerHost ?? undefined, options.poolIdleTimeoutSecs ?? undefined, options.reasoningEffort ?? undefined, options.statusEmitter ?? undefined, options.modelFallbackModels ?? undefined, options.apiKeys ?? undefined, options.requestsPerSecondFor ?? undefined, options.maxUploadBytes ?? undefined, options.toolMode ?? undefined, options.toolRouteModel ?? undefined, options.condenseToolMessages ?? undefined, options.aaakToolCondensing ?? undefined, options.summarizeContextEnabled ?? undefined, options.summarizeContextThreshold ?? undefined, options.summarizeContextKeepRecent ?? undefined, options.aaakCompressionEnabled ?? undefined, options.aaakCompressionModel ?? undefined);
 }
 /** Build a chat message JSON object with inline file bytes. */

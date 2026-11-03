@@ -42,7 +42,7 @@ emitter.subscribe(on_status)
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     status_emitter=emitter,
 )
 

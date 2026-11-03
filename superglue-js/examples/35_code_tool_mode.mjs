@@ -14,7 +14,7 @@ if (!apiKey) {
 
 const client = createClient({
   apiKey,
-  model: process.env.OPENAI_MODEL ?? "openai:gpt-4o-mini",
+  model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
   systemPrompt:
     "You are a helpful assistant. Call request_tools first, then use the code tool to invoke matched tools from JavaScript (tools.<name>(args)).",
   toolMode: "code",
@@ -52,6 +52,10 @@ await registerTool(client, {
 
 const outcome = await client.complete(
   "What's the weather in Paris? Return only the temperature.",
+  undefined,
+  undefined,
+  undefined,
+  "none",
 );
 console.log("content:", outcome.content);
 console.log("rounds:", outcome.rounds);

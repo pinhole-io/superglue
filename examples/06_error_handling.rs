@@ -49,7 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match client
         .complete(
             "Please use the broken_tool now.",
-            superglue::CallOptions::default(),
+            superglue::CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
         )
         .await
     {

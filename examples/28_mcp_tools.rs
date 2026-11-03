@@ -27,7 +27,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outcome = client
         .complete(
             "List one MCP tool name you have available (prefix mcp__). Reply in one line.",
-            superglue::CallOptions::default(),
+            superglue::CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
         )
         .await?;
 

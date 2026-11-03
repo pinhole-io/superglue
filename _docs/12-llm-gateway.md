@@ -212,14 +212,20 @@ Anthropic and TypeSafe do not embed.
 ## File transcription
 
 `POST /v1/audio/transcriptions` and `POST /v1/speech/transcriptions` accept multipart audio.
-Both paths proxy to the provider `/v1/audio/transcriptions` route.
-OpenAI and Groq support this call. Other providers return 400.
+OpenAI and Groq are proxied to `/v1/audio/transcriptions`.
+xAI is proxied to `/v1/stt`.
+A bare model that starts with `grok-voice` selects xAI.
+The public response keeps `text`, `language`, and `duration`.
+xAI word text is returned as `words[].word`.
+OpenAI, Groq, and xAI support this call. Other providers return 400.
 The body limit is 32 MB.
 Do not log the audio bytes or the transcript.
 
 The library helper is `audio::transcribe`.
-Its default models are `whisper-1` for OpenAI and `whisper-large-v3` for Groq.
+The Rust example is `38_file_transcription`.
+Its default models are `whisper-1` for OpenAI, `whisper-large-v3` for Groq, and `grok-voice-transcribe-2.0` for xAI.
 The same 32 MB cap applies.
+xAI is not a fallback when the requested provider has no key.
 
 ## Traffic capture
 

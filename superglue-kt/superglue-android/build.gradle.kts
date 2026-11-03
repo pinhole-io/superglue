@@ -35,7 +35,7 @@ plugins {
 }
 
 group = "com.superglue.kt"
-version = "1.0.0"
+version = "1.1.0"
 
 android {
     namespace = "com.superglue.kt"
@@ -43,7 +43,7 @@ android {
 
     // Kept in sync with projects/Cargo.toml via scripts/sync-superglue-versions.sh
     @Suppress("UNUSED_VARIABLE")
-    val superglueLibraryVersion = "1.0.0"
+    val superglueLibraryVersion = "1.1.0"
 
     defaultConfig {
         minSdk = 24
@@ -160,8 +160,8 @@ fun org.gradle.api.Project.resolveAndroidNdkPath(): String? {
 val nativeDir = project.layout.projectDirectory.dir("../native").asFile
 val jniOutDir = layout.projectDirectory.dir("src/main/jniLibs").asFile
 val abis = listOf("arm64-v8a", "x86_64")
-/** `superglue` path dependency of `../native` (../../superglue from native crate). */
-val superglueDir = nativeDir.parentFile.parentFile.resolve("superglue")
+/** `superglue` path dependency of the native crate (`../..` from `native/`). */
+val superglueDir = nativeDir.parentFile.parentFile
 
 val resolvedNdkPath: String? = project.resolveAndroidNdkPath()
 

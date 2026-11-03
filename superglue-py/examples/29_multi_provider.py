@@ -14,7 +14,7 @@ api_keys = {"openai": openai_key}
 if anthropic_key:
     api_keys["anthropic"] = anthropic_key
 
-models = ["openai:gpt-4o-mini"]
+models = ["openai:gpt-6-luna"]
 if anthropic_key:
     models.append("anthropic:claude-sonnet-4-20250514")
 else:

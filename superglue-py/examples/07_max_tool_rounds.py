@@ -33,7 +33,7 @@ def counter_tool() -> dict:
 # Allow up to 3 tool invocations before the engine stops.
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     system_prompt=(
         "You are an agent that calls counter_tool repeatedly. "
         "After each call check 'should_continue'; if true, call counter_tool again immediately. "
@@ -45,7 +45,10 @@ client = superglue.Client(
 client.register_tool(counter_tool)
 
 try:
-    result = client.complete("Start counting. Keep going until you're told to stop.")
+    result = client.complete(
+        "Start counting. Keep going until you're told to stop.",
+        reasoning_effort="none",
+    )
 except RuntimeError as exc:
     if "max tool rounds" not in str(exc).lower():
         raise

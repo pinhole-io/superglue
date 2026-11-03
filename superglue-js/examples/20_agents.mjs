@@ -14,7 +14,7 @@ const {
 } = require("../dist/facade.js");
 
 const API_KEY = process.env.OPENAI_API_KEY;
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini";
+const MODEL = process.env.OPENAI_MODEL ?? "gpt-6-luna";
 if (!API_KEY) {
   console.error("Set OPENAI_API_KEY before running this example.");
   process.exit(1);
@@ -99,7 +99,7 @@ async function main() {
     16,
     3,
     null,
-    null,
+    "none",
   );
 
   const financeAgent = new AgentEngine(financeSpec, API_KEY, undefined, MODEL);

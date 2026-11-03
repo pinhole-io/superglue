@@ -44,7 +44,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match client
         .complete(
             "Start counting. Keep going until you're told to stop.",
-            superglue::CallOptions::default(),
+            superglue::CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
         )
         .await
     {

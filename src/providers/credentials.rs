@@ -73,11 +73,31 @@ impl ProviderCredentials {
         creds
     }
 
-    /// Merge a legacy single key as OpenAI when no OpenAI key is set.
+    /// Fill the OpenAI key from a constructor `api_key` when none is stored yet.
+    ///
+    /// An existing key stays. That includes `OPENAI_API_KEY` from [`Self::from_env`]
+    /// and an entry in an `api_keys` map. Use [`Self::replace_openai_key_from_constructor`]
+    /// when the constructor key must replace the environment key.
     pub fn with_legacy_openai_key(&mut self, api_key: &str, base_url: Option<&str>) {
         if !api_key.is_empty() && !self.keys.contains_key(&ProviderId::OpenAi) {
             self.insert_key(ProviderId::OpenAi, api_key);
         }
+        self.fill_openai_base_url(base_url);
+    }
+
+    /// Store the constructor OpenAI key, replacing `OPENAI_API_KEY` from the environment.
+    ///
+    /// An OpenAI base URL that is already stored stays. Call
+    /// [`Self::with_legacy_openai_key`] instead when an explicit provider map
+    /// may already hold the OpenAI key.
+    pub fn replace_openai_key_from_constructor(&mut self, api_key: &str, base_url: Option<&str>) {
+        if !api_key.is_empty() {
+            self.insert_key(ProviderId::OpenAi, api_key);
+        }
+        self.fill_openai_base_url(base_url);
+    }
+
+    fn fill_openai_base_url(&mut self, base_url: Option<&str>) {
         if let Some(url) = base_url
             && !url.is_empty()
             && !self.base_urls.contains_key(&ProviderId::OpenAi)
@@ -190,6 +210,8 @@ pub fn api_key_id(key: &SecretString) -> ApiKeyId {
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
+
     use super::*;
 
     #[test]
@@ -225,6 +247,37 @@ mod tests {
         assert_eq!(
             bedrock_openai_base_url(Some("  "), Some("nope")),
             default_url
+        );
+    }
+
+    #[test]
+    fn constructor_key_replaces_env_openai_key_and_keeps_base_url() {
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::OpenAi, "sk-from-env");
+        creds.insert_base_url(ProviderId::OpenAi, "https://env.example/v1");
+        creds.replace_openai_key_from_constructor("sk-invalid-key", Some("https://api.openai.com"));
+        assert_eq!(
+            creds.key_for(ProviderId::OpenAi).unwrap().expose_secret(),
+            "sk-invalid-key"
+        );
+        assert_eq!(
+            creds.base_url_for(ProviderId::OpenAi),
+            "https://env.example/v1"
+        );
+    }
+
+    #[test]
+    fn legacy_fill_keeps_explicit_openai_key() {
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::OpenAi, "sk-from-map");
+        creds.with_legacy_openai_key("sk-constructor", Some("https://api.openai.com"));
+        assert_eq!(
+            creds.key_for(ProviderId::OpenAi).unwrap().expose_secret(),
+            "sk-from-map"
+        );
+        assert_eq!(
+            creds.base_url_for(ProviderId::OpenAi),
+            "https://api.openai.com"
         );
     }
 }

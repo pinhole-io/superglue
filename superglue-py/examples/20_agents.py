@@ -38,7 +38,7 @@ API_KEY = os.environ.get("OPENAI_API_KEY", "")
 if not API_KEY:
     raise SystemExit("Set OPENAI_API_KEY before running this example.")
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 # =============================================================================
 # Example 1 — Minimal agent (persona only)
@@ -148,7 +148,8 @@ finance_agent.register_tool(get_stock_price)
 finance_agent.register_tool(get_company_info)
 
 result = finance_agent.run(
-    "What is Apple's current stock price and how many employees do they have?"
+    "What is Apple's current stock price and how many employees do they have?",
+    reasoning_effort="none",
 )
 print("Response:", result.content)
 print(f"Tool rounds: {result.rounds}")

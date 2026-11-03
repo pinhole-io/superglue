@@ -2487,7 +2487,7 @@ impl PyAgentEngine {
     ///
     /// Returns:
     ///   CompletionOutcome
-    #[pyo3(signature = (user_message, timeout_secs=None, connect_timeout_secs=None, request_id=None))]
+    #[pyo3(signature = (user_message, timeout_secs=None, connect_timeout_secs=None, request_id=None, reasoning_effort=None))]
     fn run(
         &self,
         py: Python<'_>,
@@ -2495,6 +2495,7 @@ impl PyAgentEngine {
         timeout_secs: Option<u64>,
         connect_timeout_secs: Option<u64>,
         request_id: Option<String>,
+        reasoning_effort: Option<String>,
     ) -> PyResult<PyCompletionOutcome> {
         let http = effective_http(&self.http, timeout_secs, connect_timeout_secs)?;
         let registry = Arc::clone(&self.registry);
@@ -2505,8 +2506,12 @@ impl PyAgentEngine {
             .with_hooks(hooks)
             .with_guardrails(guardrails);
 
-        let opts =
-            finalize_call_options(&self.base_options, &self.status_emitter, request_id, None);
+        let opts = finalize_call_options(
+            &self.base_options,
+            &self.status_emitter,
+            request_id,
+            reasoning_effort,
+        );
 
         #[cfg(not(Py_GIL_DISABLED))]
         let outcome = {

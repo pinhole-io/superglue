@@ -129,13 +129,25 @@ cargo run --example 36_realtime_voice --features realtime
 
 ## File transcription
 
-`audio::transcribe` sends file bytes to `/v1/audio/transcriptions`.
+`audio::transcribe` sends a file to the provider speech route.
+OpenAI and Groq use `POST /v1/audio/transcriptions`.
+xAI uses `POST /v1/stt` and the model `grok-voice-transcribe-2.0`.
 OpenAI uses `whisper-1`. Groq uses `whisper-large-v3`.
+Use xAI only when the request names xAI and `XAI_API_KEY` is set.
 Other providers return an error.
 The size cap is 32 MB.
 Do not log the audio bytes or the transcript.
 
+```bash
+XAI_API_KEY=... cargo run --example 38_file_transcription
+```
+
+The example reads `examples/sample.mp3` when you pass no path.
+Set `SUPERGLUE_STT_PROVIDER` to `openai` or `groq` to use those providers.
+
 The gateway exposes the same call at `POST /v1/audio/transcriptions` and `POST /v1/speech/transcriptions`.
+A bare model that starts with `grok-voice` is sent to xAI.
+The gateway response uses the OpenAI word field `word`.
 A non-default base URL uses `/v1/speech/transcriptions` so a gateway hop does not recurse.
 
 ## File uploads

@@ -22,7 +22,7 @@ async function main() {
 
   const client = createClient({
     apiKey: key,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     systemPrompt:
       "You are an agent that calls counter_tool repeatedly. " +
       "After each call check 'should_continue'; if true, call counter_tool again immediately. " +
@@ -44,6 +44,10 @@ async function main() {
   try {
     const result = await client.complete(
       "Start counting. Keep going until you're told to stop.",
+      undefined,
+      undefined,
+      undefined,
+      "none",
     );
     console.log("Final content:", result.content);
     console.log("Completion rounds:", result.rounds);

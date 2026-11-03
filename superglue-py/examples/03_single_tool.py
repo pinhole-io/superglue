@@ -28,14 +28,17 @@ def get_weather(
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     system_prompt="You are a helpful weather assistant. Use tools to answer questions.",
 )
 
 # superglue infers name, description, and JSON Schema from the function.
 client.register_tool(get_weather)
 
-result = client.complete("What's the weather like in Tokyo right now?")
+result = client.complete(
+    "What's the weather like in Tokyo right now?",
+    reasoning_effort="none",
+)
 
 print("content:", result.content)
 print("rounds:", result.rounds)   # typically 2: first call triggers tool, second synthesises answer

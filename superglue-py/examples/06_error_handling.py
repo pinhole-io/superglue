@@ -14,7 +14,7 @@ if not api_key:
     print("Set OPENAI_API_KEY to run this example.")
     raise SystemExit(1)
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 # --- Bad API key ---------------------------------------------------------
 
@@ -48,7 +48,10 @@ client.register_tool(
 )
 
 try:
-    result = client.complete("Please use the broken_tool now.")
+    result = client.complete(
+        "Please use the broken_tool now.",
+        reasoning_effort="none",
+    )
     # If the model chose not to call the tool, we'll reach this branch.
     print("Model did not invoke the tool; response:", result.content)
 except RuntimeError as exc:

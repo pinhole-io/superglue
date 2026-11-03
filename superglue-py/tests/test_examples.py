@@ -17,6 +17,34 @@ SKIP_MARKERS = (
 )
 
 
+def _example_python() -> str:
+    """Interpreter that has the installed superglue wheel.
+
+    ``uv run pytest`` selects ``/usr/bin/pytest`` when the project venv has no
+    pytest install. That process reports ``sys.executable`` as system Python.
+    ``uv run`` still sets ``VIRTUAL_ENV`` to the project venv.
+    """
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        candidate = Path(venv) / "bin" / "python"
+        if candidate.is_file():
+            return str(candidate)
+    local = EXAMPLES_DIR.parent / ".venv" / "bin" / "python"
+    if local.is_file():
+        return str(local)
+    return sys.executable
+
+
+def _run_example(script: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_example_python(), str(script)],
+        cwd=EXAMPLES_DIR.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _example_ok(script: Path, result: subprocess.CompletedProcess[str]) -> bool:
     if result.returncode == 0:
         return True
@@ -30,13 +58,7 @@ def test_all_examples_run() -> None:
     scripts = sorted(EXAMPLES_DIR.glob("*.py"))
     assert scripts, f"no examples found in {EXAMPLES_DIR}"
     for script in scripts:
-        result = subprocess.run(
-            [sys.executable, str(script)],
-            cwd=EXAMPLES_DIR.parent,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = _run_example(script)
         assert _example_ok(script, result), (
             f"{script.name} failed (exit {result.returncode}):\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
@@ -49,13 +71,7 @@ def test_all_examples_run_live() -> None:
         pytest.skip("OPENAI_API_KEY not set")
     scripts = sorted(EXAMPLES_DIR.glob("*.py"))
     for script in scripts:
-        result = subprocess.run(
-            [sys.executable, str(script)],
-            cwd=EXAMPLES_DIR.parent,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = _run_example(script)
         assert result.returncode == 0, (
             f"{script.name} failed (exit {result.returncode}):\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"

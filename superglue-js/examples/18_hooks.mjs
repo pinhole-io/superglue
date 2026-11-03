@@ -92,6 +92,10 @@ async function examplePreToolMutation() {
 
   const result = await client.complete(
     "What is the temperature in London in celsius?",
+    undefined,
+    undefined,
+    undefined,
+    "none",
   );
   console.log(`  content: ${JSON.stringify(result.content)}`);
 }
@@ -134,6 +138,10 @@ async function examplePostToolMutation() {
 
   const result = await client.complete(
     "Look up user 'u-42' and tell me their role.",
+    undefined,
+    undefined,
+    undefined,
+    "none",
   );
   console.log(`  content: ${JSON.stringify(result.content)}`);
 }

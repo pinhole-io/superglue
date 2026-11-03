@@ -19,7 +19,7 @@ if not api_key:
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     system_prompt=(
         "You are a concise assistant. "
         "Always include at least one number in your responses."

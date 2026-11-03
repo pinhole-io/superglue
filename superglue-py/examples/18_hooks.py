@@ -33,7 +33,7 @@ if not API_KEY:
     print("OPENAI_API_KEY is not set — set it and re-run.")
     raise SystemExit(1)
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,10 @@ def example_pre_tool_mutation() -> None:
 
     client.register_hook(HookStage.PRE_TOOL, force_fahrenheit, name="force-fahrenheit")
 
-    result = client.complete("What is the temperature in London in celsius?")
+    result = client.complete(
+        "What is the temperature in London in celsius?",
+        reasoning_effort="none",
+    )
     print(f"  content: {result.content!r}")
 
 
@@ -131,7 +134,10 @@ def example_post_tool_mutation() -> None:
 
     client.register_hook(HookStage.POST_TOOL, inject_context, name="inject-meta")
 
-    result = client.complete("Look up user 'u-42' and tell me their role.")
+    result = client.complete(
+        "Look up user 'u-42' and tell me their role.",
+        reasoning_effort="none",
+    )
     print(f"  content: {result.content!r}")
 
 

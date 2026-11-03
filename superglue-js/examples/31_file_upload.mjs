@@ -14,7 +14,7 @@ if (!apiKey) {
 
 const client = createClient({
   apiKey,
-  model: process.env.OPENAI_MODEL ?? "openai:gpt-4o-mini",
+  model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
 });
 
 const sample = Buffer.from(

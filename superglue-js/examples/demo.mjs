@@ -21,7 +21,7 @@ async function main() {
     );
     const client = createClient({
       apiKey: "sk-placeholder",
-      model: "gpt-5.4-nano-2026-03-17-mini",
+      model: "gpt-6-luna",
       systemPrompt: "You are a concise assistant.",
     });
     await registerTool(client, {
@@ -46,7 +46,7 @@ async function main() {
 
   const client = createClient({
     apiKey,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com",
     systemPrompt: "You are a concise assistant. Use tools when relevant.",
   });
@@ -68,7 +68,13 @@ async function main() {
     }),
   });
 
-  const result = await client.complete("What is the weather in Paris?");
+  const result = await client.complete(
+    "What is the weather in Paris?",
+    undefined,
+    undefined,
+    undefined,
+    "none",
+  );
   console.log("\ncontent:", result.content);
   console.log("rounds:", result.rounds);
   console.log("usage:", result.usage);

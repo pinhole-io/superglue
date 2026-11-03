@@ -32,7 +32,7 @@ import superglue
 from superglue import Client, GuardrailStage
 
 API_KEY = os.environ.get("OPENAI_API_KEY", "sk-test")
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Built-in blocklist on INPUT — block profanity before the LLM is called

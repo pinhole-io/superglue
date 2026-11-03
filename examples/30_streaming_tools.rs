@@ -32,7 +32,7 @@ impl Tool for EchoTool {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ClientBuilder::new()
         .api_key(std::env::var("OPENAI_API_KEY").unwrap_or_default())
-        .model(std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "openai:gpt-4o-mini".into()))
+        .model(std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-6-luna".into()))
         .build()?;
     client.register_tool(Arc::new(EchoTool)).await?;
 
@@ -40,7 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = client
         .stream(
             "Call echo with {\"msg\":\"hi\"} then say OK",
-            CallOptions::default(),
+            CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
             |d| {
                 printed.push_str(&d);
                 print!("{d}");

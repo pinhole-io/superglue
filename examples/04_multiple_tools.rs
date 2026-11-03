@@ -70,7 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outcome = client
         .complete(
             "What is (3 + 4) multiplied by 5? Use the tools.",
-            superglue::CallOptions::default(),
+            superglue::CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
         )
         .await?;
 

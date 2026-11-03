@@ -150,7 +150,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outcome = client
         .complete(
             "What's the temperature in Tokyo?",
-            superglue::CallOptions::default(),
+            superglue::CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
         )
         .await?;
     println!("  content: {:?}", outcome.content);

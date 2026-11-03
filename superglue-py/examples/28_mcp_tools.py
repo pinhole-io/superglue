@@ -14,7 +14,7 @@ if not api_key:
 
 client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
 )
 
 client.connect_mcp_stdio(
@@ -24,6 +24,7 @@ client.connect_mcp_stdio(
 )
 
 result = client.complete(
-    "Name one available tool with the mcp__ prefix. One line only."
+    "Name one available tool with the mcp__ prefix. One line only.",
+    reasoning_effort="none",
 )
 print("content:", result.content)

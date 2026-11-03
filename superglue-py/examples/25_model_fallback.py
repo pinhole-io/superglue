@@ -8,7 +8,7 @@ if not api_key:
     print("Set OPENAI_API_KEY to run this example.")
     raise SystemExit(1)
 
-primary = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+primary = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 backup = os.environ.get("OPENAI_FALLBACK_MODEL", primary)
 
 client = superglue.Client(

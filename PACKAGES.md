@@ -52,7 +52,7 @@ Intended registry names:
 
 The workflow files `publish-pypi.yml`, `publish-npm.yml`, and `publish-maven.yml` are not in this repository.
 A GitHub Release does not upload those packages until those workflows exist.
-Tag a release as `v` plus the workspace version. Example: workspace `1.0.0` uses tag `v1.0.0`.
+Tag a release as `v` plus the workspace version. Example: workspace `1.1.0` uses tag `v1.1.0`.
 
 When you add the workflows, use this setup:
 

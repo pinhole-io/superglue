@@ -218,7 +218,10 @@ impl ClientBuilder {
     ) -> Self {
         let mut creds = self.provider_credentials.unwrap_or_else(|| {
             let mut c = crate::providers::ProviderCredentials::from_env();
-            c.with_legacy_openai_key(self.api_key.as_deref().unwrap_or(""), Some(&self.base_url));
+            c.replace_openai_key_from_constructor(
+                self.api_key.as_deref().unwrap_or(""),
+                Some(&self.base_url),
+            );
             c
         });
         creds.insert_key(provider, key);
@@ -234,7 +237,10 @@ impl ClientBuilder {
     ) -> Self {
         let mut creds = self.provider_credentials.unwrap_or_else(|| {
             let mut c = crate::providers::ProviderCredentials::from_env();
-            c.with_legacy_openai_key(self.api_key.as_deref().unwrap_or(""), Some(&self.base_url));
+            c.replace_openai_key_from_constructor(
+                self.api_key.as_deref().unwrap_or(""),
+                Some(&self.base_url),
+            );
             c
         });
         creds.insert_base_url(provider, url);

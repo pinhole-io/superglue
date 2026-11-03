@@ -19,7 +19,7 @@ async function main() {
 
   const client = createClient({
     apiKey: key,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     // Shrink idle pool so the process can exit sooner if something still holds the loop.
     poolMaxIdlePerHost: 0,
     poolIdleTimeoutSecs: 1,
@@ -71,6 +71,10 @@ async function main() {
 
   const outcome = await client.complete(
     "What illustrative weather does the demo return for Tokyo?",
+    undefined,
+    undefined,
+    undefined,
+    "none",
   );
   console.log("content:", outcome.content);
   console.log("rounds:", outcome.rounds);

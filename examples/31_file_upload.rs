@@ -7,7 +7,7 @@ use superglue::files::FilePurpose;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ClientBuilder::new()
         .api_key(std::env::var("OPENAI_API_KEY").unwrap_or_default())
-        .model(std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "openai:gpt-4o-mini".into()))
+        .model(std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-6-luna".into()))
         .build()?;
 
     let sample = superglue::files::demo_pdf_bytes();

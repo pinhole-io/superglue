@@ -107,8 +107,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let engine = AgentEngine::new(agent_spec);
-    let opts =
+    let mut opts =
         superglue::chat::ChatOptions::new(support::base_url(), api_key.clone(), model.clone());
+    opts.reasoning_effort = Some("none".to_string());
     let outcome = engine
         .run(
             &http_client,

@@ -59,7 +59,7 @@ async function main() {
 
   const client = createClient({
     apiKey: key,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     systemPrompt:
       "You are a financial assistant. " +
       "Always use the available tools to retrieve real data before answering.",
@@ -104,6 +104,10 @@ async function main() {
   const result = await client.complete(
     "Give me a brief summary of Apple (AAPL) — current price, today's change, " +
       "and a couple of key company facts.",
+    undefined,
+    undefined,
+    undefined,
+    "none",
   );
 
   console.log(result.content);

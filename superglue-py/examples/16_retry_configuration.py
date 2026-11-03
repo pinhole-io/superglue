@@ -30,7 +30,7 @@ import superglue
 # 1. Default — sensible for most interactive use
 default_client = superglue.Client(
     api_key="sk-placeholder",   # no live call with this client
-    model="gpt-5.4-nano-2026-03-17-mini",
+    model="gpt-6-luna",
     # max_retries=3, retry_initial_delay_ms=1000, retry_max_delay_ms=6000,
     # retry_multiplier=3.0  ← these are all the defaults
 )
@@ -38,7 +38,7 @@ default_client = superglue.Client(
 # 2. Aggressive — for high-throughput batch jobs that must succeed
 aggressive_client = superglue.Client(
     api_key="sk-placeholder",
-    model="gpt-5.4-nano-2026-03-17-mini",
+    model="gpt-6-luna",
     max_retries=6,
     retry_initial_delay_ms=100,
     retry_max_delay_ms=30_000,   # up to 30 s between attempts
@@ -48,7 +48,7 @@ aggressive_client = superglue.Client(
 # 3. Impatient — for latency-sensitive user-facing requests
 impatient_client = superglue.Client(
     api_key="sk-placeholder",
-    model="gpt-5.4-nano-2026-03-17-mini",
+    model="gpt-6-luna",
     max_retries=1,
     retry_initial_delay_ms=200,
     retry_max_delay_ms=200,      # flat, no growth
@@ -59,7 +59,7 @@ impatient_client = superglue.Client(
 # 4. No retries — when the caller handles failure itself
 no_retry_client = superglue.Client(
     api_key="sk-placeholder",
-    model="gpt-5.4-nano-2026-03-17-mini",
+    model="gpt-6-luna",
     max_retries=0,
 )
 
@@ -98,7 +98,7 @@ if not api_key:
 
 production_client = superglue.Client(
     api_key=api_key,
-    model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
     # Retry up to 5 times with exponential backoff capped at 10 s
     max_retries=5,
     retry_initial_delay_ms=100,

@@ -21,7 +21,7 @@ async function main() {
 
   const client = createClient({
     apiKey: key,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     systemPrompt: "You are a helpful assistant. Always write at least 100 words.",
   });
 

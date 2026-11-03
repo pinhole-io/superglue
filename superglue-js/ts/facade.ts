@@ -100,7 +100,7 @@ function envOpenAiModel(): string | undefined {
 }
 
 export function createClient(options: ClientOptions): Client {
-  const model = options.model ?? envOpenAiModel();
+  const model = options.model ?? envOpenAiModel() ?? "gpt-6-luna";
   return new Client(
     options.apiKey,
     model,

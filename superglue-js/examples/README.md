@@ -16,7 +16,9 @@ node examples/01_simple_completion.mjs
 
 `08_custom_base_url.mjs` reads `OPENAI_BASE_URL`.
 `28_mcp_tools.mjs` runs only when `MCP_RUN=1`.
+`34_context_optimization_live_benchmark.mjs` compares two context configs on one prompt.
 `35_code_tool_mode.mjs` needs a native build that includes the `code` feature. The binding crate enables that feature.
+`37_systemone.mjs` needs `TYPESAFE_API_KEY`. It exits 0 when that variable is unset.
 
 ## Example 21
 

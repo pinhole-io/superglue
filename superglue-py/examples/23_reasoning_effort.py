@@ -28,7 +28,7 @@ if not api_key:
     raise SystemExit(1)
 
 # Use a reasoning-capable model (gpt-5.x or o-series). Override via env if needed.
-model = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+model = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 print("=" * 60)
 print("1. Client-level reasoning_effort")

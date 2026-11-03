@@ -20,7 +20,7 @@ async function main() {
   console.log("=== Bad API key ===");
   const badClient = createClient({
     apiKey: "sk-invalid-key",
-    model: "gpt-5.4-nano-2026-03-17-mini",
+    model: "gpt-6-luna",
   });
   try {
     await badClient.complete("Hello");
@@ -31,7 +31,7 @@ async function main() {
   console.log("=== Tool that throws ===");
   const client = createClient({
     apiKey: key,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     poolMaxIdlePerHost: 0,
     poolIdleTimeoutSecs: 1,
     systemPrompt:
@@ -50,6 +50,10 @@ async function main() {
   try {
     const result = await client.complete(
       "Invoke the broken_tool once (demo failure path).",
+      undefined,
+      undefined,
+      undefined,
+      "none",
     );
     console.log("Model did not invoke the tool; response:", result.content);
   } catch (exc) {
@@ -59,7 +63,7 @@ async function main() {
   console.log("=== Successful call ===");
   const goodClient = createClient({
     apiKey: key,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.4-nano-2026-03-17-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
     poolMaxIdlePerHost: 0,
     poolIdleTimeoutSecs: 1,
   });

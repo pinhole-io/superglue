@@ -63,6 +63,8 @@ Shipped for xAI. Other adapters are planned.
 
 - `realtime` feature and `VoiceSession`
 - xAI Speech to Speech adapter
+- xAI file transcription (`grok-voice-transcribe-2.0` on `POST /v1/stt`)
+- Rust example `38_file_transcription`
 - Binary audio, transcripts, interruptions, and function-call events
 - Cancel closes the provider WebSocket
 - Rust example `36_realtime_voice`

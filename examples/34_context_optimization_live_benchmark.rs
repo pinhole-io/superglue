@@ -224,7 +224,13 @@ async fn run_live_config(
         profile.initial_messages()
     };
     match client
-        .complete_messages(messages, superglue::CallOptions::default())
+        .complete_messages(
+            messages,
+            superglue::CallOptions {
+                reasoning_effort: Some("none".to_string()),
+                ..Default::default()
+            },
+        )
         .await
     {
         Ok(outcome) => {
@@ -365,7 +371,13 @@ async fn run_live_multiturn(
 
         let history_before = history.clone();
         match client
-            .complete_messages(history.clone(), superglue::CallOptions::default())
+            .complete_messages(
+                history.clone(),
+                superglue::CallOptions {
+                    reasoning_effort: Some("none".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
         {
             Ok(outcome) => {

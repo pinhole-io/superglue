@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let anthropic_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    let mut models = vec!["openai:gpt-4o-mini"];
+    let mut models = vec!["openai:gpt-6-luna"];
     if anthropic_key.is_empty() {
         eprintln!("ANTHROPIC_API_KEY not set — skipping anthropic model.");
     } else {

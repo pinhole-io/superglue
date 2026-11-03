@@ -46,7 +46,7 @@ API_KEY = os.environ.get("OPENAI_API_KEY", "")
 if not API_KEY:
     raise SystemExit("Set OPENAI_API_KEY before running this example.")
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 # =============================================================================
 # Example 1 — SimpleExecutor
@@ -166,7 +166,7 @@ spec = AgentSpec(
     constraints=["Always include the unit (°C or °F) in your response."],
 )
 
-agent = Agent(spec, api_key=API_KEY, model=MODEL)
+agent = Agent(spec, api_key=API_KEY, model=MODEL, reasoning_effort="none")
 agent.register_tool(get_temperature)
 
 agent_ex = AgentExecutor(agent=agent)

@@ -35,7 +35,7 @@ CI does that. A JVM test must tolerate a missing `.so`.
 
 ```kotlin
 dependencies {
-    implementation("com.superglue.kt:superglue-android:1.0.0")
+    implementation("com.superglue.kt:superglue-android:1.1.0")
 }
 ```
 

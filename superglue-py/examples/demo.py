@@ -25,7 +25,7 @@ if not api_key:
     )
     client = superglue.Client(
         api_key="sk-placeholder",
-        model="gpt-5.4-nano-2026-03-17-mini",
+        model="gpt-6-luna",
         system_prompt="You are a concise assistant.",
     )
     # Schema is inferred automatically from annotations and docstring.
@@ -34,13 +34,16 @@ if not api_key:
 else:
     client = superglue.Client(
         api_key=api_key,
-        model=os.environ.get("OPENAI_MODEL", "gpt-5.4-nano-2026-03-17-mini"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
         base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com"),
         system_prompt="You are a concise assistant. Use tools when relevant.",
     )
     client.register_tool(get_weather)
 
-    result = client.complete("What is the weather in Paris?")
+    result = client.complete(
+        "What is the weather in Paris?",
+        reasoning_effort="none",
+    )
     print("\ncontent:", result.content)
     print("rounds:", result.rounds)
     print("usage:", result.usage)

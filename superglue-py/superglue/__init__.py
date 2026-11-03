@@ -1357,6 +1357,7 @@ class Agent:
             timeout_secs=timeout_secs,
             connect_timeout_secs=connect_timeout_secs,
             request_id=request_id,
+            reasoning_effort=reasoning_effort,
         )
 
     def stream(

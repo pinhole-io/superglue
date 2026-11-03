@@ -13,7 +13,7 @@ use superglue::chat::CompletionOutcome;
 use superglue::tools::{Tool, ToolInvokeError, ToolSpec};
 use superglue::{Client, ClientBuildError};
 
-pub const DEFAULT_MODEL: &str = "gpt-5.4-nano";
+pub const DEFAULT_MODEL: &str = "gpt-6-luna";
 
 pub fn require_api_key() -> String {
     match std::env::var("OPENAI_API_KEY") {
