@@ -12,8 +12,6 @@ SuperGlue talks to model providers, runs tool calling, streams tokens, and recor
 
 [Quick start](#quick-start) · [Install](#install) · [Providers](docs/multi-provider.md) · [Gateway](_docs/12-llm-gateway.md) · [Examples](examples/README.md) · [Design notes](_docs/README.md)
 
-> Release `1.1.0`. The workflow engine is on the [roadmap](_docs/09-roadmap-and-phasing.md).
-
 ## Contents
 
 - [Install](#install)
@@ -27,6 +25,7 @@ SuperGlue talks to model providers, runs tool calling, streams tokens, and recor
 - [Examples](#examples)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+- [Breaking changes](#breaking-changes)
 - [License](#license)
 
 ## Install
@@ -51,7 +50,7 @@ Optional Cargo features stay off until you enable them.
 | `otlp` | OpenTelemetry span export |
 | `prometheus` | Prometheus metrics endpoint |
 | `code` | Programmatic JavaScript tool mode |
-| `realtime` | Realtime voice sessions. The first adapter is xAI Speech to Speech. |
+| `realtime` | Realtime voice sessions on xAI Speech to Speech and OpenAI Realtime |
 
 ### Rust
 
@@ -63,7 +62,7 @@ superglue = { git = "https://github.com/pinhole-io/superglue" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Pin a release with `tag = "v1.1.0"`. Enable a feature in the same dependency:
+Pin a release with `tag = "v<version>"`. The current version is in [VERSION](VERSION). Enable a feature in the same dependency:
 
 ```toml
 superglue = { git = "https://github.com/pinhole-io/superglue", features = ["gateway"] }
@@ -121,17 +120,17 @@ Add the Android library from Maven Central:
 
 ```kotlin
 dependencies {
-    implementation("com.superglue.kt:superglue-android:1.1.0")
+    implementation("com.superglue.kt:superglue-android:<version>")
 }
 ```
 
-The AAR contains `arm64-v8a` and `x86_64`. Each GitHub release also stores `superglue-android-1.1.0.aar`.
+Replace `<version>` with the release you use. The AAR contains `arm64-v8a` and `x86_64`. Each GitHub release also stores `superglue-android-<version>.aar`.
 
 A file dependency does not pull AndroidX or kotlinx. Add those libraries yourself, or include the `:superglue-android` module from this repository.
 
 ```kotlin
 dependencies {
-    implementation(files("libs/superglue-android-1.1.0.aar"))
+    implementation(files("libs/superglue-android-<version>.aar"))
 }
 ```
 
@@ -240,7 +239,8 @@ Each tool can use `FailFast`, `Skip`, or `Retry`. One round can dispatch several
 | Context control | Dynamic tool routing, round condensing, and optional code-mode tools (`code` feature) |
 | Files | Inline bytes or a provider file upload. Default inline cap is 20 MB. |
 | Conversations | `Client::conversation` keeps turns. Rust `push_user_message` accepts file and image parts. |
-| Voice | Duplex sessions on xAI when you enable `realtime` |
+| Voice | Duplex sessions on xAI and OpenAI Realtime when you enable `realtime`. Python, Node.js, and Kotlin open them with `voice_connect` or `voiceConnect`. |
+| Run logs | `MemoryRunStore`, or `JsonlRunStore` on disk. The JSONL store writes each tool round, so a crashed run can resume. |
 | System One | TypeSafe checks through `Client::system_one` and gateway `POST /v1/systemone` |
 | Transcription | OpenAI, Groq, and xAI file transcription. Gateway paths are under `/v1/audio` and `/v1/speech`. |
 | Observability | `tracing` with redaction. Optional OTLP and Prometheus. |
@@ -291,7 +291,7 @@ TypeSafe (`TYPESAFE_API_KEY`) is the System One evaluation API. It is separate f
 
 Embeddings use `provider:embedding:model` when the model must appear in an embedding catalog. Example: `openai:embedding:text-embedding-3-small`. Bedrock text embeddings use the same tag, for example `bedrock:embedding:amazon.titan-embed-text-v2:0`. The gateway catalog loads Bedrock foundation models and inference profiles.
 
-Voice example: `xai:grok-voice-think-fast-2.0` with the `realtime` feature and `XAI_API_KEY`.
+Voice needs the `realtime` feature. xAI uses `grok-voice-think-fast-2.0` and `XAI_API_KEY`. OpenAI uses a realtime model such as `gpt-realtime` and `OPENAI_API_KEY`.
 
 File uploads, per-key rate limits, and binding overrides: [docs/multi-provider.md](docs/multi-provider.md).
 
@@ -367,6 +367,7 @@ cargo run --example 28_mcp_tools --features mcp
 cargo run --example 35_code_tool_mode --features code
 cargo run --example 36_realtime_voice --features realtime
 cargo run --example 38_file_transcription
+cargo run --example 39_jsonl_resume
 ```
 
 | Goal | Example |
@@ -385,6 +386,7 @@ cargo run --example 38_file_transcription
 | MCP tools | `28_mcp_tools` |
 | Voice | `36_realtime_voice` |
 | File transcription | `38_file_transcription` |
+| Resume a crashed run | `39_jsonl_resume` |
 | TypeSafe System One | `37_systemone` |
 
 The full parity table is in [examples/README.md](examples/README.md).
@@ -428,6 +430,21 @@ After you change `[workspace.package].version`:
 Tag the release `v` plus the workspace version. Registry upload is described in [PACKAGES.md](PACKAGES.md). The publish workflows are not in this repository yet.
 
 Layout notes: [MONOREPO.md](MONOREPO.md).
+
+## Breaking changes
+
+### 1.2.0
+
+These changes affect the Rust API only. The Python, Node.js, and Kotlin APIs only add methods.
+
+| Item | Change | What to do |
+| --- | --- | --- |
+| `audit::RunStore` | Renamed to `MemoryRunStore`. It implements the new `AuditStore` trait. | Rename the type. Import `AuditStore` to call `get`, `list`, and `insert`. |
+| `ClientBuilder::audit`, `RunRecorder::new` | Take `Arc<dyn AuditStore>` | Pass `store.clone()`. `Arc::clone(&store)` fixes the wrong type and does not compile. |
+| `insert` | Returns `Result<(), AuditError>` | Handle the error, or call `.unwrap()` in tests. |
+| `VoiceProvider` | New required methods `session_update`, `encode_audio`, and `interrupt` | A custom provider must implement them. |
+| `VoiceError` | New variant `Config(String)` | Add an arm to an exhaustive `match`. |
+| `ChatOptions` | New public field `transition_log` | Build the struct with `..ChatOptions::default()`. |
 
 ## License
 

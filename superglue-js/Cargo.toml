@@ -19,7 +19,7 @@ napi = { version = "3", default-features = false, features = [
 napi-derive = "3"
 secrecy = "0.10"
 serde_json = "1"
-superglue = { path = "..", features = ["code", "mcp"] }
+superglue = { path = "..", features = ["code", "mcp", "realtime"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 
 [build-dependencies]

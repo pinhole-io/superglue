@@ -15,7 +15,10 @@ use tokio::sync::RwLock;
 
 pub use jsonl::JsonlRunStore;
 
-use crate::chat::{ChatOptions, CompletionOutcome, complete_with_tools};
+use crate::chat::{
+    ChatOptions, CompletionOutcome, TransitionKind, TransitionLog, TransitionNote,
+    complete_with_tools,
+};
 use crate::events::{ProcessEvent, ProcessEventKind, StatusSubscriber};
 use crate::hooks::{HookContext, HookError, HookHandler, HookStage};
 use crate::http::HttpClient;
@@ -28,6 +31,8 @@ use crate::responses;
 // ---------------------------------------------------------------------------
 
 /// Failure while writing or reading an audit log.
+///
+/// Messages never include record bodies.
 #[derive(Debug, thiserror::Error)]
 pub enum AuditError {
     #[error("request id is not a safe file name")]
@@ -42,9 +47,9 @@ pub enum AuditError {
 
 /// Persistence for run records and replayable steps.
 #[async_trait]
-pub trait AuditStore: Send + Sync {
+pub trait AuditStore: Send + Sync + std::fmt::Debug {
     /// Append one step. The store assigns `seq`.
-    fn append_blocking(&self, transition: proto::WorkflowTransition) -> Result<(), AuditError>;
+    async fn append(&self, transition: proto::WorkflowTransition) -> Result<(), AuditError>;
 
     /// Store a finished run record.
     async fn insert(&self, record: proto::RunRecord) -> Result<(), AuditError>;
@@ -56,12 +61,28 @@ pub trait AuditStore: Send + Sync {
     async fn list(&self) -> Vec<proto::RunRecord>;
 }
 
-/// In-memory store of completed run records and partial steps.
+/// Unfinished runs a [`MemoryRunStore`] keeps when it has no capacity cap.
+const MAX_PARTIAL_RUNS: usize = 1024;
+
+#[derive(Debug, Default)]
+struct PartialRuns {
+    by_id: HashMap<String, Vec<proto::WorkflowTransition>>,
+    order: VecDeque<String>,
+}
+
+impl PartialRuns {
+    fn remove(&mut self, request_id: &str) {
+        if self.by_id.remove(request_id).is_some() {
+            self.order.retain(|id| id != request_id);
+        }
+    }
+}
+
+/// In-memory store of completed run records and the steps of unfinished runs.
 #[derive(Debug)]
 pub struct MemoryRunStore {
     records: RwLock<VecDeque<proto::RunRecord>>,
-    transitions: Mutex<HashMap<String, Vec<proto::WorkflowTransition>>>,
-    seqs: Mutex<HashMap<String, u32>>,
+    partial: RwLock<PartialRuns>,
     max_capacity: Option<usize>,
 }
 
@@ -69,14 +90,14 @@ impl MemoryRunStore {
     pub fn new(max_capacity: Option<usize>) -> Self {
         MemoryRunStore {
             records: RwLock::new(VecDeque::new()),
-            transitions: Mutex::new(HashMap::new()),
-            seqs: Mutex::new(HashMap::new()),
+            partial: RwLock::new(PartialRuns::default()),
             max_capacity,
         }
     }
 
     pub async fn clear(&self) {
         self.records.write().await.clear();
+        *self.partial.write().await = PartialRuns::default();
     }
 
     pub async fn len(&self) -> usize {
@@ -90,17 +111,28 @@ impl MemoryRunStore {
 
 #[async_trait]
 impl AuditStore for MemoryRunStore {
-    fn append_blocking(&self, mut transition: proto::WorkflowTransition) -> Result<(), AuditError> {
-        transition.seq = jsonl::next_seq(&self.seqs, &transition.request_id)?;
-        let mut guard = self.transitions.lock().map_err(|_| AuditError::Poisoned)?;
-        guard
+    async fn append(&self, mut transition: proto::WorkflowTransition) -> Result<(), AuditError> {
+        let cap = self.max_capacity.unwrap_or(MAX_PARTIAL_RUNS).max(1);
+        let mut partial = self.partial.write().await;
+        if !partial.by_id.contains_key(&transition.request_id) {
+            while partial.order.len() >= cap {
+                if let Some(oldest) = partial.order.pop_front() {
+                    partial.by_id.remove(&oldest);
+                }
+            }
+            partial.order.push_back(transition.request_id.clone());
+        }
+        let steps = partial
+            .by_id
             .entry(transition.request_id.clone())
-            .or_default()
-            .push(transition);
+            .or_default();
+        transition.seq = u32::try_from(steps.len()).unwrap_or(u32::MAX);
+        steps.push(transition);
         Ok(())
     }
 
     async fn insert(&self, record: proto::RunRecord) -> Result<(), AuditError> {
+        self.partial.write().await.remove(&record.request_id);
         let mut deque = self.records.write().await;
         if let Some(cap) = self.max_capacity {
             while deque.len() >= cap {
@@ -118,9 +150,11 @@ impl AuditStore for MemoryRunStore {
                 return Some(record.clone());
             }
         }
-        let guard = self.transitions.lock().ok()?;
-        let transitions = guard.get(request_id)?;
-        Some(record_from_transitions(transitions))
+        let partial = self.partial.read().await;
+        partial
+            .by_id
+            .get(request_id)
+            .map(|steps| record_from_transitions(steps))
     }
 
     async fn list(&self) -> Vec<proto::RunRecord> {
@@ -141,12 +175,17 @@ pub struct FinishMetadata {
 }
 
 /// Accumulates hook and process events for a run.
+///
+/// Buffers are keyed by `request_id`. Hook events without a request id share one
+/// bucket that the next finished run drains.
 pub struct RunRecorder {
     store: Arc<dyn AuditStore>,
     max_hook_events: Option<usize>,
     max_process_events: Option<usize>,
     events: RwLock<HashMap<String, VecDeque<proto::HookEvent>>>,
     process_events: RwLock<HashMap<String, VecDeque<proto::ProcessEvent>>>,
+    /// Messages each live run has appended through its [`TransitionLog`].
+    logged: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 fn push_capped<T>(deque: &mut VecDeque<T>, item: T, cap: Option<usize>) {
@@ -174,6 +213,7 @@ impl RunRecorder {
             max_process_events,
             events: RwLock::new(HashMap::new()),
             process_events: RwLock::new(HashMap::new()),
+            logged: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -191,6 +231,44 @@ impl RunRecorder {
             HookStage::PreBatchItem,
             HookStage::PostBatchItem,
         ]
+    }
+
+    /// Build the per-call sink that appends loop steps to the store.
+    ///
+    /// `RUN_STARTED` carries [`options_snapshot`], so a crashed run can resume.
+    pub fn transition_log(&self, options: &ChatOptions) -> TransitionLog {
+        let store = Arc::clone(&self.store);
+        let logged = Arc::clone(&self.logged);
+        let options_json = options_snapshot(options);
+        TransitionLog::new(move |note: TransitionNote| {
+            let store = Arc::clone(&store);
+            let logged = Arc::clone(&logged);
+            let options_json = options_json.clone();
+            Box::pin(async move {
+                let kind = match note.kind {
+                    TransitionKind::RunStarted => {
+                        set_logged(&logged, &note.request_id, Some(0));
+                        proto::WorkflowTransitionKind::RunStarted
+                    }
+                    TransitionKind::MessageAppended => {
+                        bump_logged(&logged, &note.request_id);
+                        proto::WorkflowTransitionKind::MessageAppended
+                    }
+                };
+                let transition = proto::WorkflowTransition {
+                    request_id: note.request_id,
+                    kind: kind as i32,
+                    timestamp_ms: now_ms(),
+                    message: note.message.as_ref().map(chat_message_to_proto),
+                    options_json: (kind == proto::WorkflowTransitionKind::RunStarted)
+                        .then_some(options_json),
+                    ..Default::default()
+                };
+                if let Err(error) = store.append(transition).await {
+                    tracing::warn!("audit transition append failed: {error}");
+                }
+            })
+        })
     }
 
     pub async fn finish(
@@ -212,6 +290,10 @@ impl RunRecorder {
         .await;
     }
 
+    /// Store a finished run.
+    ///
+    /// When the run used a [`TransitionLog`], append the messages the loop did not
+    /// write and a `RUN_FINISHED` step before the record.
     pub async fn finish_with_metadata(
         &self,
         request_id: String,
@@ -221,43 +303,86 @@ impl RunRecorder {
         finished_at_ms: i64,
         meta: FinishMetadata,
     ) {
-        let events = {
-            let mut guard = self.events.write().await;
-            guard.remove(&request_id).unwrap_or_default().into()
-        };
-        let process_events = {
-            let mut guard = self.process_events.write().await;
-            guard.remove(&request_id).unwrap_or_default().into()
-        };
+        let (events, process_events) = self.drain_buffers(&request_id).await;
+        if let Some(logged) = set_logged(&self.logged, &request_id, None) {
+            for message in unlogged_tail(&messages, logged) {
+                self.append_logged(proto::WorkflowTransition {
+                    request_id: request_id.clone(),
+                    kind: proto::WorkflowTransitionKind::MessageAppended as i32,
+                    timestamp_ms: finished_at_ms,
+                    message: Some(message.clone()),
+                    ..Default::default()
+                })
+                .await;
+            }
+            self.append_logged(proto::WorkflowTransition {
+                request_id: request_id.clone(),
+                kind: proto::WorkflowTransitionKind::RunFinished as i32,
+                timestamp_ms: finished_at_ms,
+                outcome: Some(outcome.clone()),
+                previous_response_id: meta.previous_response_id.clone(),
+                ..Default::default()
+            })
+            .await;
+        }
         let record = proto::RunRecord {
-            request_id: request_id.clone(),
+            request_id,
             messages,
             hook_events: events,
-            outcome: Some(outcome.clone()),
+            outcome: Some(outcome),
             started_at_ms,
             finished_at_ms,
             process_events,
             options_json: meta.options_json,
             model_used: meta.model_used,
-            previous_response_id: meta.previous_response_id.clone(),
-        };
-        let finished = proto::WorkflowTransition {
-            request_id: request_id.clone(),
-            seq: 0,
-            kind: proto::WorkflowTransitionKind::RunFinished as i32,
-            timestamp_ms: finished_at_ms,
-            message: None,
-            process_event: None,
-            outcome: Some(outcome),
-            error_type: None,
             previous_response_id: meta.previous_response_id,
         };
-        if let Err(error) = self.store.append_blocking(finished) {
-            tracing::warn!("audit transition append failed: {error}");
-        }
         if let Err(error) = self.store.insert(record).await {
             tracing::warn!("audit record insert failed: {error}");
         }
+    }
+
+    /// Mark a run as failed and drop its buffered events.
+    ///
+    /// The steps already written stay in the store, so the run can resume.
+    pub async fn record_failure(&self, request_id: &str, error_type: &str) {
+        self.drain_buffers(request_id).await;
+        if set_logged(&self.logged, request_id, None).is_some() {
+            self.append_logged(proto::WorkflowTransition {
+                request_id: request_id.to_string(),
+                kind: proto::WorkflowTransitionKind::RunFailed as i32,
+                timestamp_ms: now_ms(),
+                error_type: Some(error_type.to_string()),
+                ..Default::default()
+            })
+            .await;
+        }
+    }
+
+    async fn append_logged(&self, transition: proto::WorkflowTransition) {
+        if let Err(error) = self.store.append(transition).await {
+            tracing::warn!("audit transition append failed: {error}");
+        }
+    }
+
+    async fn drain_buffers(
+        &self,
+        request_id: &str,
+    ) -> (Vec<proto::HookEvent>, Vec<proto::ProcessEvent>) {
+        let events = {
+            let mut guard = self.events.write().await;
+            let mut events: Vec<_> = guard.remove("").unwrap_or_default().into();
+            if !request_id.is_empty() {
+                events.extend(guard.remove(request_id).unwrap_or_default());
+                events.sort_by_key(|event| event.timestamp_ms);
+            }
+            events
+        };
+        let process_events = {
+            let mut guard = self.process_events.write().await;
+            guard.remove(request_id).unwrap_or_default().into()
+        };
+        (events, process_events)
     }
 
     pub async fn peek_events(&self) -> Vec<proto::HookEvent> {
@@ -269,7 +394,7 @@ impl RunRecorder {
             .collect()
     }
 
-    /// Persist a completed chat turn into the configured [`RunStore`].
+    /// Persist a completed chat turn into the configured [`AuditStore`].
     pub async fn record_chat_completion(
         &self,
         outcome: &CompletionOutcome,
@@ -293,7 +418,7 @@ impl RunRecorder {
         .await;
     }
 
-    /// Persist a completed Responses turn into the configured [`RunStore`].
+    /// Persist a completed Responses turn into the configured [`AuditStore`].
     pub async fn record_response_completion(
         &self,
         outcome: &responses::ResponseOutcome,
@@ -335,11 +460,49 @@ impl RunRecorder {
             metadata: event.metadata,
         };
         if let Ok(mut guard) = self.process_events.try_write() {
-            let bucket = guard
-                .entry(proto_event.request_id.clone())
-                .or_default();
+            let bucket = guard.entry(proto_event.request_id.clone()).or_default();
             push_capped(bucket, proto_event, self.max_process_events);
         }
+    }
+}
+
+/// Set or clear the logged-message count for a run. Returns the previous count.
+fn set_logged(
+    logged: &Mutex<HashMap<String, usize>>,
+    request_id: &str,
+    value: Option<usize>,
+) -> Option<usize> {
+    let mut guard = logged
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match value {
+        Some(count) => guard.insert(request_id.to_string(), count),
+        None => guard.remove(request_id),
+    }
+}
+
+fn bump_logged(logged: &Mutex<HashMap<String, usize>>, request_id: &str) {
+    let mut guard = logged
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(count) = guard.get_mut(request_id) {
+        *count += 1;
+    }
+}
+
+/// Messages of a finished run that the loop did not append.
+///
+/// Context summarization can shorten the final transcript below the logged count.
+/// The final assistant reply is then the only new message.
+fn unlogged_tail(messages: &[proto::ChatMessage], logged: usize) -> &[proto::ChatMessage] {
+    if logged <= messages.len() {
+        return &messages[logged..];
+    }
+    match messages.last() {
+        Some(last) if last.role == "assistant" && last.tool_calls.is_empty() => {
+            std::slice::from_ref(last)
+        }
+        _ => &[],
     }
 }
 
@@ -439,6 +602,8 @@ pub enum ResumeError {
 
 /// Rebuild a run from ordered transitions.
 ///
+/// Each `RUN_STARTED` restarts the transcript, because the loop writes the full
+/// caller transcript after it. A resumed run therefore replaces the earlier attempt.
 /// A trailing assistant message whose tool calls have no results is dropped.
 /// The next completion runs that round again.
 pub fn record_from_transitions(transitions: &[proto::WorkflowTransition]) -> proto::RunRecord {
@@ -448,6 +613,7 @@ pub fn record_from_transitions(transitions: &[proto::WorkflowTransition]) -> pro
     let mut started_at_ms = 0;
     let mut finished_at_ms = 0;
     let mut previous_response_id = None;
+    let mut options_json = None;
     for transition in transitions {
         if !transition.request_id.is_empty() {
             request_id = transition.request_id.clone();
@@ -455,6 +621,12 @@ pub fn record_from_transitions(transitions: &[proto::WorkflowTransition]) -> pro
         match proto::WorkflowTransitionKind::try_from(transition.kind) {
             Ok(proto::WorkflowTransitionKind::RunStarted) => {
                 started_at_ms = transition.timestamp_ms;
+                finished_at_ms = 0;
+                messages.clear();
+                outcome = None;
+                if transition.options_json.is_some() {
+                    options_json = transition.options_json.clone();
+                }
             }
             Ok(proto::WorkflowTransitionKind::MessageAppended) => {
                 if let Some(message) = &transition.message {
@@ -480,16 +652,52 @@ pub fn record_from_transitions(transitions: &[proto::WorkflowTransition]) -> pro
         started_at_ms,
         finished_at_ms,
         process_events: Vec::new(),
-        options_json: None,
+        options_json,
         model_used: None,
         previous_response_id,
     }
 }
 
+/// Write a record as steps, for a store that keeps only steps.
+pub(crate) fn record_to_transitions(record: &proto::RunRecord) -> Vec<proto::WorkflowTransition> {
+    let mut steps = Vec::with_capacity(record.messages.len() + 2);
+    steps.push(proto::WorkflowTransition {
+        request_id: record.request_id.clone(),
+        kind: proto::WorkflowTransitionKind::RunStarted as i32,
+        timestamp_ms: record.started_at_ms,
+        options_json: record.options_json.clone(),
+        ..Default::default()
+    });
+    steps.extend(
+        record
+            .messages
+            .iter()
+            .map(|message| proto::WorkflowTransition {
+                request_id: record.request_id.clone(),
+                kind: proto::WorkflowTransitionKind::MessageAppended as i32,
+                timestamp_ms: record.started_at_ms,
+                message: Some(message.clone()),
+                ..Default::default()
+            }),
+    );
+    if record.outcome.is_some() {
+        steps.push(proto::WorkflowTransition {
+            request_id: record.request_id.clone(),
+            kind: proto::WorkflowTransitionKind::RunFinished as i32,
+            timestamp_ms: record.finished_at_ms,
+            outcome: record.outcome.clone(),
+            previous_response_id: record.previous_response_id.clone(),
+            ..Default::default()
+        });
+    }
+    steps
+}
+
 fn drop_incomplete_tool_round(messages: &mut Vec<proto::ChatMessage>) {
-    let Some(index) = messages.iter().rposition(|message| {
-        message.role == "assistant" && !message.tool_calls.is_empty()
-    }) else {
+    let Some(index) = messages
+        .iter()
+        .rposition(|message| message.role == "assistant" && !message.tool_calls.is_empty())
+    else {
         return;
     };
     let ids: Vec<String> = messages[index]

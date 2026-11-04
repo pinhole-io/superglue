@@ -9,3 +9,4 @@ mod jni_conversation;
 mod jni_engine;
 mod jni_status;
 mod jni_version;
+mod jni_voice;

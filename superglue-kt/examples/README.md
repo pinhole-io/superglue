@@ -54,14 +54,17 @@ From `superglue-android/`, that path is the directory that contains this reposit
 | 32 | Context optimization | `example32_context_optimization` |
 | 34 | Live context comparison | `example34_context_optimization_live` |
 | 35 | Code tool mode | `example35_code_tool_mode` |
+| 36 | Realtime voice | `example36_realtime_voice` |
 | 37 | TypeSafe System One | `example37_systemone` |
 | demo | Short demo | `example_demo` |
 
 `example37_systemone` needs `TYPESAFE_API_KEY`.
 `example28_mcp_tools` runs only when `MCP_RUN=1`.
 
-There is no JUnit example for 33, 36, or 38.
-Those rows use Rust bench fixtures, `VoiceSession`, and `audio::transcribe`.
+`example36_realtime_voice` uses OpenAI Realtime. `OPENAI_REALTIME_MODEL` overrides `gpt-realtime`.
+
+There is no JUnit example for 33, 38, or 39.
+Those rows use Rust bench fixtures, `audio::transcribe`, and `JsonlRunStore`.
 
 ## Client options used by the tests
 

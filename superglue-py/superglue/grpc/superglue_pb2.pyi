@@ -19,6 +19,15 @@ class ProcessEventKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     VOICE_SESSION_START: _ClassVar[ProcessEventKind]
     VOICE_SESSION_END: _ClassVar[ProcessEventKind]
     VOICE_FUNCTION_CALL: _ClassVar[ProcessEventKind]
+
+class WorkflowTransitionKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    RUN_STARTED: _ClassVar[WorkflowTransitionKind]
+    MESSAGE_APPENDED: _ClassVar[WorkflowTransitionKind]
+    LLM_CALL_FINISHED: _ClassVar[WorkflowTransitionKind]
+    TOOL_CALL_FINISHED: _ClassVar[WorkflowTransitionKind]
+    RUN_FINISHED: _ClassVar[WorkflowTransitionKind]
+    RUN_FAILED: _ClassVar[WorkflowTransitionKind]
 LLM_CALL_START: ProcessEventKind
 LLM_CALL_END: ProcessEventKind
 LLM_CALL_ERROR: ProcessEventKind
@@ -29,6 +38,12 @@ REASONING_DELTA: ProcessEventKind
 VOICE_SESSION_START: ProcessEventKind
 VOICE_SESSION_END: ProcessEventKind
 VOICE_FUNCTION_CALL: ProcessEventKind
+RUN_STARTED: WorkflowTransitionKind
+MESSAGE_APPENDED: WorkflowTransitionKind
+LLM_CALL_FINISHED: WorkflowTransitionKind
+TOOL_CALL_FINISHED: WorkflowTransitionKind
+RUN_FINISHED: WorkflowTransitionKind
+RUN_FAILED: WorkflowTransitionKind
 
 class ToolSpec(_message.Message):
     __slots__ = ("name", "parameters_schema_json", "description", "static_tool")
@@ -285,6 +300,30 @@ class ProcessEvent(_message.Message):
     timestamp_ms: int
     metadata: _containers.ScalarMap[str, str]
     def __init__(self, kind: _Optional[_Union[ProcessEventKind, str]] = ..., request_id: _Optional[str] = ..., round: _Optional[int] = ..., model: _Optional[str] = ..., tool_call_count: _Optional[int] = ..., usage: _Optional[_Union[Usage, _Mapping]] = ..., estimated_cost_usd: _Optional[float] = ..., error_type: _Optional[str] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class WorkflowTransition(_message.Message):
+    __slots__ = ("request_id", "seq", "kind", "timestamp_ms", "message", "process_event", "outcome", "error_type", "previous_response_id", "options_json")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_MS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    PROCESS_EVENT_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    ERROR_TYPE_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_RESPONSE_ID_FIELD_NUMBER: _ClassVar[int]
+    OPTIONS_JSON_FIELD_NUMBER: _ClassVar[int]
+    request_id: str
+    seq: int
+    kind: WorkflowTransitionKind
+    timestamp_ms: int
+    message: ChatMessage
+    process_event: ProcessEvent
+    outcome: CompletionOutcome
+    error_type: str
+    previous_response_id: str
+    options_json: str
+    def __init__(self, request_id: _Optional[str] = ..., seq: _Optional[int] = ..., kind: _Optional[_Union[WorkflowTransitionKind, str]] = ..., timestamp_ms: _Optional[int] = ..., message: _Optional[_Union[ChatMessage, _Mapping]] = ..., process_event: _Optional[_Union[ProcessEvent, _Mapping]] = ..., outcome: _Optional[_Union[CompletionOutcome, _Mapping]] = ..., error_type: _Optional[str] = ..., previous_response_id: _Optional[str] = ..., options_json: _Optional[str] = ...) -> None: ...
 
 class StreamChunk(_message.Message):
     __slots__ = ("delta", "usage", "finish_reason", "reasoning_delta")

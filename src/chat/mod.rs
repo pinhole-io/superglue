@@ -6,6 +6,7 @@ mod file_locks;
 mod loop_guard;
 pub mod reasoning;
 pub(crate) mod stream_tools;
+pub(crate) mod transition;
 
 pub(crate) use loop_guard::{SharedToolLoopGuard, new_tool_loop_guard};
 
@@ -21,6 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 pub use conversation::Conversation;
+pub use transition::{TransitionKind, TransitionLog, TransitionNote};
 
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
@@ -440,6 +442,8 @@ pub struct ChatOptions {
 
     /// Session image cache used to turn tool `vision.image_hash` results into multimodal input.
     pub image_store: Option<Arc<tokio::sync::Mutex<crate::images::ImageStore>>>,
+    /// Opt-in sink for replayable steps of the unary tool loops. Audit sets it per call.
+    pub transition_log: Option<TransitionLog>,
 }
 
 impl Default for ChatOptions {
@@ -488,6 +492,7 @@ impl Default for ChatOptions {
             context_block_provider: None,
             context_event_logger: None,
             image_store: None,
+            transition_log: None,
         }
     }
 }
@@ -581,6 +586,7 @@ impl From<proto::ChatOptions> for ChatOptions {
             context_block_provider: None,
             context_event_logger: None,
             image_store: None,
+            transition_log: None,
         }
     }
 }
@@ -1340,7 +1346,7 @@ async fn available_tool_names(registry: &ToolRegistry) -> String {
     format!("{}, …", names[..MAX_NAMES].join(", "))
 }
 
-fn chat_error_class(error: &ChatError) -> &'static str {
+pub(crate) fn chat_error_class(error: &ChatError) -> &'static str {
     match error.root_cause() {
         ChatError::Http(_) => "http",
         ChatError::Serde(_) => "serialization",
@@ -1717,6 +1723,12 @@ pub async fn complete_with_tools(
     let mut empty_round_retries: u32 = 0;
     let loop_guard = new_tool_loop_guard();
     let mut last_prefix_hash = None;
+    transition::emit_start(
+        options.transition_log.as_ref(),
+        &request_id,
+        &conversation_messages_for_client(&messages, injected_prefix, 0),
+    )
+    .await;
 
     let mut all_specs = registry.list_specs().await;
     let mut active_set = ActiveToolSet::new(all_specs.clone(), options.tool_mode);
@@ -1951,6 +1963,7 @@ pub async fn complete_with_tools(
                 })
                 .await;
                 if let Some(catalog) = catalog {
+                    let round_start = messages.len();
                     messages.push(msg.clone());
                     messages.push(ChatMessage {
                         role: "tool".to_string(),
@@ -1963,10 +1976,17 @@ pub async fn complete_with_tools(
                         refusal: None,
                         provider_blocks: None,
                     });
+                    transition::emit_messages(
+                        options.transition_log.as_ref(),
+                        &request_id,
+                        &messages[round_start..],
+                    )
+                    .await;
                 }
                 continue;
             }
 
+            let round_start = messages.len();
             messages.push(msg.clone());
 
             // Run tool handlers concurrently on this process (order of `tool` messages follows `tool_calls`).
@@ -2011,6 +2031,12 @@ pub async fn complete_with_tools(
                     options.context_event_logger.as_ref(),
                 );
             }
+            transition::emit_messages(
+                options.transition_log.as_ref(),
+                &request_id,
+                &messages[round_start..],
+            )
+            .await;
             continue;
         }
 

@@ -601,9 +601,62 @@ public class SuperglueClient
 
         public fun toConversation(): SuperglueConversation = SuperglueConversation.open(this)
 
+        /**
+         * Open a realtime voice session with this client's credentials.
+         *
+         * [configJson] holds `provider` (`"openai"` or `"xai"`), `model`, `voice`, `instructions`,
+         * `sample_rate`, `server_vad`, `base_url`, and `tools`. It never holds an API key.
+         * OpenAI needs a realtime `model`.
+         */
+        public fun voiceConnect(
+            configJson: String,
+            onEvent: VoiceEventCallback,
+        ): SuperglueVoiceSession {
+            val h = SuperglueNativeJni.clientVoiceConnect(handle, configJson, onEvent)
+            if (h == 0L) throw SuperglueException("clientVoiceConnect failed")
+            return SuperglueVoiceSession(h)
+        }
+
         override fun close() {
             if (handle != 0L) {
                 SuperglueNativeJni.clientDestroy(handle)
+            }
+        }
+    }
+
+/**
+ * Connected realtime voice session. Create it with [SuperglueClient.voiceConnect].
+ *
+ * Audio is PCM16 mono at the session sample rate. [close] ends the provider connection.
+ */
+public class SuperglueVoiceSession
+    @PublishedApi
+    internal constructor(
+        private val handle: Long,
+    ) : AutoCloseable {
+        public fun sendText(text: String) {
+            SuperglueNativeJni.voiceSendText(handle, text)
+        }
+
+        public fun sendAudio(audio: ByteArray) {
+            SuperglueNativeJni.voiceSendAudio(handle, audio)
+        }
+
+        public fun interrupt() {
+            SuperglueNativeJni.voiceInterrupt(handle)
+        }
+
+        /** Return a tool result for a `function_call` event and request the next response. */
+        public fun submitToolResult(
+            callId: String,
+            outputJson: String,
+        ) {
+            SuperglueNativeJni.voiceSubmitToolResult(handle, callId, outputJson)
+        }
+
+        override fun close() {
+            if (handle != 0L) {
+                SuperglueNativeJni.voiceDestroy(handle)
             }
         }
     }

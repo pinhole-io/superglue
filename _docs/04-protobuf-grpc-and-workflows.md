@@ -79,16 +79,41 @@ The `serve` command builds an empty tool registry. Host tools stay on the in-pro
 
 Shipped today:
 
-- `RunStore` and `RunRecorder`
-- `ClientBuilder::audit`
+- The `AuditStore` trait, with `append`, `insert`, `get`, and `list`
+- `MemoryRunStore`: bounded and in memory
+- `JsonlRunStore`: one JSONL file of `WorkflowTransition` lines per request id
+- `RunRecorder` and `ClientBuilder::audit(Arc<dyn AuditStore>)`
 - `audit::resume_chat` and `audit::resume_response`
 - `export_record_json` and `import_record_json` for metadata replay files
 
-The store is in memory and bounded.
-Disk or an external store is a later choice. See [Security and threat model](06-security-and-threat-model.md).
+### Replayable run transitions
 
-Workflow transitions are not a runtime yet.
-When they exist, they belong in this protobuf model so a run can be serialized and replayed.
+A unary run writes transitions while the tool loop runs:
+
+1. `RUN_STARTED` holds the client messages and `options_json`. It resets the folded transcript.
+2. `MESSAGE_APPENDED` holds one message. A tool round is written after all its tool results.
+3. `RUN_FINISHED` or `RUN_FAILED` closes the run.
+
+`get` folds the transitions into a `RunRecord`.
+A run without `RUN_FINISHED` is a partial run. Pass it to `resume_chat` or `resume_response` to continue.
+
+`JsonlRunStore` behavior:
+
+- It calls `fsync` after each line.
+- It skips a truncated final line.
+- It drops an assistant tool-call round that has no complete set of tool results.
+- It accepts only request ids that match `[A-Za-z0-9_-]+`.
+- A disk error is logged. The completion continues.
+
+This is not a general workflow engine. There are no branches, timers, or external triggers.
+
+### Warning: a tool can run twice
+
+A crash can occur after a tool runs and before its round is written.
+Resume then runs that tool again.
+Make side-effect tools idempotent, or key them on the request id and tool call id.
+
+See [Security and threat model](06-security-and-threat-model.md) for the data on disk.
 
 ## See also
 

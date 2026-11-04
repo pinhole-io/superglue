@@ -11,6 +11,7 @@ use superglue::guardrails::GuardrailRegistry;
 use superglue::hooks::HookRegistry;
 use superglue::http::HttpClient;
 use superglue::openai::ChatMessage;
+use superglue::realtime::VoiceSession;
 use superglue::tools::ToolRegistry;
 use tokio::sync::watch;
 
@@ -51,6 +52,7 @@ pub enum KHandle {
     Conversation(ConversationState),
     Engine(Arc<EngineState>),
     StatusEmitter(Arc<StatusEmitter>),
+    Voice(VoiceSession),
 }
 
 pub fn alloc(h: KHandle) -> u64 {
@@ -92,6 +94,14 @@ pub fn get_status_emitter(id: u64) -> Result<Arc<StatusEmitter>, String> {
     match t.get(&id) {
         Some(KHandle::StatusEmitter(s)) => Ok(Arc::clone(s)),
         _ => Err(format!("invalid status emitter handle: {id}")),
+    }
+}
+
+pub fn get_voice(id: u64) -> Result<VoiceSession, String> {
+    let t = table().lock().expect("handles");
+    match t.get(&id) {
+        Some(KHandle::Voice(s)) => Ok(s.clone()),
+        _ => Err(format!("invalid voice session handle: {id}")),
     }
 }
 

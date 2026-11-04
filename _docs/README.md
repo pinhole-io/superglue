@@ -38,15 +38,17 @@ Provider routing is in [`../docs/multi-provider.md`](../docs/multi-provider.md).
 | Model fallback and `provider:model` routing | Shipped |
 | Context optimization and code mode (`code` feature) | Shipped |
 | MCP tools (`mcp` feature) | Shipped |
-| Realtime voice (`realtime` feature, xAI adapter) | Shipped |
+| Realtime voice (`realtime` feature, xAI and OpenAI adapters) | Shipped |
+| Voice sessions on the Python, Node.js, and Kotlin bindings | Shipped |
+| Replayable run transitions and `JsonlRunStore` | Shipped |
+| Gateway budget holds for in-flight requests | Shipped |
 | Protobuf schema and gRPC server (`grpc` feature) | Shipped |
 | Audit records and resume helpers | Shipped |
 | Tracing scrub, OTLP (`otlp`), Prometheus (`prometheus`) | Shipped |
 | LLM gateway (`gateway` feature) | Shipped |
 | Gateway traffic capture (`capture` feature) | Shipped |
 | Python, Node.js, and Kotlin bindings | Shipped |
-| Workflow engine | Planned |
-| OpenAI Realtime adapter | Planned |
+| General workflow engine (branches, timers, triggers) | Out of scope. Replayable transitions cover resume. |
 | Traffic shaping from [note 07](07-network-privacy-and-telemetry-shaping.md) | Not a product requirement |
 
 ## Related code

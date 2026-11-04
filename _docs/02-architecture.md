@@ -31,13 +31,13 @@ The gateway is an optional HTTP front door. It uses the same providers.
 | `systemone` | TypeSafe System One evaluation |
 | `usage` | Token breakdown helpers |
 | `costing` | Static USD rates and billed-cost lookup |
-| `audit` | In-memory `RunStore`, `RunRecorder`, resume helpers |
+| `audit` | `AuditStore`, `MemoryRunStore`, `JsonlRunStore`, `RunRecorder`, resume helpers |
 | `telemetry` | Tracing, scrub modes, OpenInference attributes, metrics |
 | `cancel` | `CancellationToken` re-export |
 | `proto` | Types generated from `proto/superglue.proto` |
 | `content_quality` | Heuristics for low-signal web text |
 | `mcp` | MCP clients. Feature `mcp`. |
-| `realtime` | Duplex voice sessions. Feature `realtime`. xAI adapter. |
+| `realtime` | Duplex voice sessions. Feature `realtime`. xAI and OpenAI adapters. |
 | `grpc` | tonic server. Feature `grpc`. |
 | `gateway` | OpenAI-compatible HTTP proxy. Feature `gateway`. |
 
@@ -63,7 +63,7 @@ Those bindings attach files with `message_with_file_bytes` and `complete_message
 | `OnToolError` | `FailFast` (default), `Skip`, or `Retry` with exponential backoff |
 | `tools::harness` | Scripted tool plan with no live model |
 | `VoiceSession` | Duplex WebSocket audio, transcripts, interruptions, and function-call events |
-| `RunStore` | Bounded in-memory `proto::RunRecord` store |
+| `AuditStore` | Run store trait. `MemoryRunStore` is bounded and in memory. `JsonlRunStore` appends `WorkflowTransition` lines so a partial run can resume. |
 | gRPC | `Complete`, `Stream`, `CompleteResponses`, `StreamResponses` |
 
 ## Bindings
@@ -79,8 +79,18 @@ Those bindings attach files with `message_with_file_bytes` and `complete_message
 Python `register_tool` infers JSON Schema from the function. See [Tool boundary and async](03-tool-boundary-and-async.md).
 JavaScript and Kotlin require an explicit JSON Schema.
 
-The Python, Node, and Kotlin bindings compile the core with `code` and `mcp`.
-Gateway, gRPC, OTLP, Prometheus, capture, and realtime stay off unless you enable them on the Rust crate or CLI.
+The Python, Node, and Kotlin bindings compile the core with `code`, `mcp`, and `realtime`.
+Gateway, gRPC, OTLP, Prometheus, and capture stay off unless you enable them on the Rust crate or CLI.
+
+Each binding exposes a voice session:
+
+| Binding | Entry point | Event delivery |
+| --- | --- | --- |
+| Python | `Client.voice_connect(config, on_event=...)` | Callback on a native thread. The GIL is held only for the callback. |
+| Node.js | `client.voiceConnect(config, onEvent)` | Threadsafe function on the event loop |
+| Kotlin | `SuperglueClient.voiceConnect(configJson, onEvent)` | `VoiceEventCallback` on a native thread |
+
+The voice config never holds an API key. The session uses the client credentials.
 
 ## Surfaces
 

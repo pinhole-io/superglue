@@ -63,6 +63,7 @@ from ._superglue import (  # noqa: F401  (re-exported for users)
     ResponseOutcome,
     ResponseStreamOutcome,
     StreamOutcome,
+    VoiceSession,
     _RustStatusEmitter,
     version,
 )
@@ -711,6 +712,23 @@ class Client:
         ``questions`` is a map of id to ``{type, instructions, criteria?}``.
         """
         return self._rust.system_one(state, questions, model=model)
+
+    def voice_connect(
+        self,
+        config: dict[str, Any],
+        *,
+        on_event: Callable[[dict[str, Any]], None],
+    ) -> VoiceSession:
+        """Open a realtime voice session with this client's credentials.
+
+        ``config`` holds ``provider`` (``"openai"`` or ``"xai"``), ``model``, ``voice``,
+        ``instructions``, ``sample_rate``, ``server_vad``, ``base_url``, and ``tools``.
+        It never holds an API key. OpenAI needs a realtime ``model``.
+
+        ``on_event`` receives one dict per event on a background thread. An
+        ``output_audio`` event carries PCM bytes under ``audio``.
+        """
+        return self._rust.voice_connect(config, on_event)
 
     def add_typesafe_guardrail(
         self,

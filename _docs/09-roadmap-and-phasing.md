@@ -35,13 +35,14 @@ Shipped.
 
 ## Phase 4: gRPC, audit, and more bindings
 
-Shipped, except the workflow engine.
+Shipped.
 
 - tonic RPCs: `Complete`, `Stream`, `CompleteResponses`, `StreamResponses`
-- `RunStore`, `RunRecorder`, `resume_chat`, `resume_response`
+- `AuditStore`, `MemoryRunStore`, `RunRecorder`, `resume_chat`, `resume_response`
+- `WorkflowTransition` lines and `JsonlRunStore`, so a partial unary run can resume after a crash
 - `scripts/generate-proto-clients.sh` for Python and JavaScript stubs
 - Node.js binding (`superglue-js`) and Kotlin JNI binding (`superglue-kt`)
-- Workflow engine: planned
+- A general workflow engine is out of scope. See [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md).
 
 ## Phase 5: Hardening and context control
 
@@ -59,17 +60,18 @@ Shipped.
 
 ## Phase 6: Realtime voice
 
-Shipped for xAI. Other adapters are planned.
+Shipped.
 
 - `realtime` feature and `VoiceSession`
+- `VoiceProvider` owns the session payload, the audio encoding, and the interrupt frames
 - xAI Speech to Speech adapter
+- OpenAI Realtime adapter: GA `session.update`, base64 audio, `response.cancel`, and `conversation.item.truncate`
 - xAI file transcription (`grok-voice-transcribe-2.0` on `POST /v1/stt`)
 - Rust example `38_file_transcription`
 - Binary audio, transcripts, interruptions, and function-call events
 - Cancel closes the provider WebSocket
 - Rust example `36_realtime_voice`
-- OpenAI Realtime adapter: planned
-- Voice methods on the language bindings: planned
+- Voice sessions on the Python, Node.js, and Kotlin bindings
 
 ## Phase 7: LLM gateway
 
@@ -77,6 +79,7 @@ Shipped.
 
 - OpenAI-compatible HTTP proxy (`gateway`)
 - Virtual keys, users, profiles, budgets, and usage in SQLite
+- Budget holds for in-flight requests (schema v5)
 - Embeddings, Responses, System One, and file transcription routes
 - Self-hosted proxy providers
 - Admin UI in `gateway-admin/`
@@ -84,8 +87,7 @@ Shipped.
 
 ## Still planned
 
-- Workflow engine and protobuf workflow transitions
-- OpenAI Realtime adapter and voice APIs on the bindings
+No phase work is open.
 
 Context flags are in [Context optimization](11-context-optimization.md).
 

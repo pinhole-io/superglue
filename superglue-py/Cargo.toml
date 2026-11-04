@@ -18,7 +18,7 @@ prost = "0.14"
 pyo3 = { version = "0.29", features = ["extension-module"] }
 secrecy = "0.10"
 serde_json = "1"
-superglue = { path = "..", features = ["code", "mcp"] }
+superglue = { path = "..", features = ["code", "mcp", "realtime"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 
 [build-dependencies]

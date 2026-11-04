@@ -114,17 +114,43 @@ Superglue does not infer this capability from a model name.
 ## Realtime voice
 
 Enable the `realtime` feature.
-The first adapter is xAI Speech to Speech:
+`VoiceSession` supports two adapters:
 
-```text
-xai:grok-voice-think-fast-2.0
-```
+| Provider | Config | Audio on the wire | Default voice |
+| --- | --- | --- | --- |
+| xAI Speech to Speech | `VoiceConfig::xai(credentials)` | Binary PCM16 frames | Provider default |
+| OpenAI Realtime | `VoiceConfig::openai(credentials, model)` | Base64 `input_audio_buffer.append` | `marin` at 24 kHz |
 
-`VoiceSession` uses the xAI realtime WebSocket and requires `XAI_API_KEY`.
-Keep that key on a trusted server when a browser or phone connects.
+The xAI model is `grok-voice-think-fast-2.0`. It requires `XAI_API_KEY`.
+OpenAI requires a realtime model, for example `gpt-realtime`, and `OPENAI_API_KEY`.
+Keep the key on a trusted server when a browser or phone connects.
+
+On `interrupt`, the OpenAI adapter sends `response.cancel`.
+It then sends `conversation.item.truncate` with the audio played so far, so the model forgets the unheard part.
 
 ```bash
 cargo run --example 36_realtime_voice --features realtime
+SUPERGLUE_VOICE_PROVIDER=openai cargo run --example 36_realtime_voice --features realtime
+```
+
+The Python, JavaScript, and Kotlin versions of example 36 run one OpenAI turn with a tool call.
+
+The bindings take a JSON config with these fields:
+
+- `provider`: `"openai"` or `"xai"` (required)
+- `model`: required for OpenAI
+- `voice`, `instructions`, `sample_rate`, `server_vad`, `base_url`, `tools`
+
+The config rejects unknown fields, so an `api_key` field is an error.
+The session uses the credentials of the client that opened it.
+
+```python
+session = client.voice_connect(
+    {"provider": "openai", "model": "gpt-realtime"},
+    on_event=lambda event: print(event["type"]),
+)
+session.send_text("Hello")
+session.close()
 ```
 
 ## File transcription

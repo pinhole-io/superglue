@@ -246,6 +246,8 @@ message WorkflowTransition {
   optional string error_type = 8;
   /// Responses API id captured on RUN_FINISHED.
   optional string previous_response_id = 9;
+  /// Secret-free options snapshot captured on RUN_STARTED.
+  optional string options_json = 10;
 }
 
 // ---------------------------------------------------------------------------

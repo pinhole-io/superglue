@@ -1295,7 +1295,10 @@ impl Database {
             request_id,
         )?;
         let held = release_reservation(&tx, request_id)?;
-        let spend_user = held.as_ref().map(|(user, _)| user.as_str()).unwrap_or(user_id);
+        let spend_user = held
+            .as_ref()
+            .map(|(user, _)| user.as_str())
+            .unwrap_or(user_id);
         tx.execute(
             "UPDATE users SET spend = spend + ?1 WHERE id = ?2",
             params![cost_usd, spend_user],
@@ -2155,8 +2158,16 @@ mod tests {
     #[test]
     fn non_finite_cost_does_not_increase_spend() {
         let (_dir, db) = budgeted_user(1.0);
-        db.record_usage(None, "user-1", "openai:gpt-4o-mini", 1, 1, f64::NAN, "req-nan")
-            .unwrap();
+        db.record_usage(
+            None,
+            "user-1",
+            "openai:gpt-4o-mini",
+            1,
+            1,
+            f64::NAN,
+            "req-nan",
+        )
+        .unwrap();
         let user = db.get_user("user-1").unwrap().unwrap();
         assert_eq!(user.spend, 0.0);
     }

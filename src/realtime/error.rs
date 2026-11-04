@@ -12,6 +12,8 @@ pub enum VoiceError {
     Connect(#[from] tokio_tungstenite::tungstenite::Error),
     #[error("realtime voice protocol error: {0}")]
     Protocol(String),
+    #[error("invalid realtime voice config: {0}")]
+    Config(String),
     #[error("realtime voice session was cancelled")]
     Cancelled,
     #[error("realtime voice command channel closed")]

@@ -197,7 +197,42 @@ OpenAI-compatible providers use `/v1/responses`. That set is OpenAI, xAI, Groq, 
 - **enforce=false** — track spend but never reject (track-only mode)
 - Budgets reset lazily per user when `next_budget_reset_at` passes
 
-**v1 limitation:** there is no cost reservation. A single large request may push spend above the budget limit after the pre-check passes.
+### Budget holds
+
+An enforced budget reserves an estimate before the provider call:
+
+1. The gateway estimates the cost. Prompt tokens are the prompt characters divided by 4.
+2. Completion tokens are added only when the client set `max_completion_tokens` or `max_output_tokens`.
+3. The check rejects the request when `spend + held + estimate > max_budget`.
+4. When the request finishes, `record_usage` replaces the hold with the billed cost.
+5. A failed or cancelled request releases the hold.
+6. A hold older than 15 minutes expires on the next reservation.
+
+The reset of an expired window and the hold commit in one SQLite transaction.
+Concurrent requests therefore cannot all pass the same remaining budget.
+
+**Limit:** without `max_completion_tokens`, the hold covers only the prompt.
+One long reply can still push spend above the limit. Set `max_completion_tokens` for a strict cap.
+
+#### Example: a hold rejects a request before the provider call
+
+1. Create an enforced budget of `$0.01`. Attach it to a profile, a user, and a key, as in [Admin setup](#admin-setup-http-api).
+2. Send a request that asks for up to 100,000 completion tokens:
+
+   ```bash
+   curl -X POST http://localhost:8080/v1/chat/completions \
+     -H "X-Superglue-Key: Bearer sgw-..." \
+     -H "Content-Type: application/json" \
+     -d '{
+       "model": "openai:gpt-4o-mini",
+       "max_completion_tokens": 100000,
+       "messages": [{"role": "user", "content": "Hello!"}]
+     }'
+   ```
+
+3. The gateway rejects the request with HTTP 429 and the `budget_exceeded` error. The estimate is 100,000 × $0.60 / 1M ≈ $0.06, which is more than $0.01.
+4. Send the same request with `"max_completion_tokens": 200`. The estimate is less than $0.001, so the request reaches the provider.
+5. After the reply, the user `spend` shows the billed cost. No hold stays behind.
 
 ## Embeddings
 

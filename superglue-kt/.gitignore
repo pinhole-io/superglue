@@ -16,3 +16,5 @@ captures/
 
 # Native build output
 native/target/
+# Host and Android JNI copies. Rebuild with buildRustJni or buildRustJniHost.
+superglue-android/src/main/jniLibs/**/*.so

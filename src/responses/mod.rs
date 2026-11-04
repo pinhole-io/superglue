@@ -822,6 +822,12 @@ async fn responses_tool_loop(
     let loop_guard = new_tool_loop_guard();
     let injected_prefix = injected_system_prefix_count(options);
     let mut last_prefix_hash = None;
+    crate::chat::transition::emit_start(
+        options.transition_log.as_ref(),
+        &request_id,
+        &conversation_messages_for_client(&messages, injected_prefix, 0),
+    )
+    .await;
 
     let outcome = loop {
         if api_calls >= options.max_tool_rounds {
@@ -966,6 +972,7 @@ async fn responses_tool_loop(
             .await;
 
             let mut outputs = Vec::new();
+            let round_start = messages.len();
             messages.push(ChatMessage {
                 role: "assistant".to_string(),
                 content: None,
@@ -988,12 +995,21 @@ async fn responses_tool_loop(
                 });
                 messages.push(msg);
             }
+            let mut vision_attached = false;
             if let Some(store) = &options.image_store {
                 let store = store.lock().await;
-                if crate::images::attach_vision_from_tool_results(&mut messages, &store) > 0 {
-                    reset_chain_after_context_mutation(&mut previous_response_id, &mut tool_input);
-                    continue;
-                }
+                vision_attached =
+                    crate::images::attach_vision_from_tool_results(&mut messages, &store) > 0;
+            }
+            crate::chat::transition::emit_messages(
+                options.transition_log.as_ref(),
+                &request_id,
+                &messages[round_start..],
+            )
+            .await;
+            if vision_attached {
+                reset_chain_after_context_mutation(&mut previous_response_id, &mut tool_input);
+                continue;
             }
             tool_input = Some(outputs);
             continue;

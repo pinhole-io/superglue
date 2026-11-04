@@ -60,9 +60,10 @@ Set `OPENAI_BASE_URL` yourself when you want a specific host. See `08_custom_bas
 | 33 | Context benchmark, wiremock | yes | | | |
 | 34 | Context benchmark, live API | yes | yes | yes | `example34_context_optimization_live` |
 | 35 | Code tool mode | yes | yes | yes | `example35_code_tool_mode` |
-| 36 | Realtime voice | yes | | | |
+| 36 | Realtime voice | yes | yes | yes | `example36_realtime_voice` |
 | 37 | TypeSafe System One | yes | yes | yes | `example37_systemone` |
 | 38 | File transcription | yes | | | |
+| 39 | JSONL run store and resume | yes | | | |
 | demo | Short demo | yes | yes | yes | `example_demo` |
 
 Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
@@ -73,9 +74,10 @@ Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
 | `33_context_optimization_benchmark` | No API key. Wiremock. |
 | `34_context_optimization_live_benchmark` | `OPENAI_API_KEY` and `OPENAI_MODEL`. Python, JavaScript, and Kotlin compare two configs on one prompt. The Rust file also runs the fat-payload and multi-turn matrix. |
 | `35_code_tool_mode` | `--features code` |
-| `36_realtime_voice` | `--features realtime` and `XAI_API_KEY` |
+| `36_realtime_voice` | `--features realtime` and `XAI_API_KEY`. Set `SUPERGLUE_VOICE_PROVIDER=openai` to use `OPENAI_API_KEY`. `OPENAI_REALTIME_MODEL` overrides `gpt-realtime`. Python, JavaScript, and Kotlin use OpenAI and run one scripted turn with a tool call. |
 | `37_systemone` | `TYPESAFE_API_KEY` |
 | `38_file_transcription` | `XAI_API_KEY`. Uses `examples/sample.mp3` unless you pass another path. Set `SUPERGLUE_STT_PROVIDER` to `openai` or `groq` for those keys. |
+| `39_jsonl_resume` | `OPENAI_API_KEY`. Writes to a temporary directory. The example crashes a child run, then resumes it. |
 
 ## Rust `Client`
 
@@ -93,5 +95,5 @@ The Python script is [`../superglue-py/examples/21_executors.py`](../superglue-p
 Python, JavaScript, and Kotlin have no API for these rows.
 
 - **33** drives Wiremock through `benches/support`.
-- **36** uses `VoiceSession` from the `realtime` feature.
 - **38** calls `audio::transcribe`.
+- **39** uses `JsonlRunStore`. The bindings do not expose an audit store.

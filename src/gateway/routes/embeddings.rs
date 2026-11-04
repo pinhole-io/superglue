@@ -17,8 +17,8 @@ use crate::embeddings::{
 };
 use crate::gateway::GatewayState;
 use crate::gateway::auth::{Auth, resolve_user_id};
-use crate::gateway::error::GatewayError;
 use crate::gateway::budget::estimate_hold_usd;
+use crate::gateway::error::GatewayError;
 use crate::gateway::proxy::{preflight_async, record_usage_async};
 use crate::gateway::proxy_provider::{self, ProxyTarget};
 use crate::http::join_base_url;

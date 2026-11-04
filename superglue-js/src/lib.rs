@@ -43,6 +43,10 @@ use superglue::responses::{
 };
 use superglue::tools::{Tool, ToolInvokeError, ToolRegistry, ToolSpec};
 
+mod voice;
+
+use voice::{VoiceEventJs, VoiceSession};
+
 // ---------------------------------------------------------------------------
 // JSON threadsafe callbacks (args object in, result object out; sync or async on JS side)
 // ---------------------------------------------------------------------------
@@ -929,6 +933,25 @@ impl Client {
                 .await;
         }
         Ok(())
+    }
+
+    /// Open a realtime voice session with this client's credentials.
+    ///
+    /// `config` holds `provider` (`"openai"` or `"xai"`), `model`, `voice`, `instructions`,
+    /// `sample_rate`, `server_vad`, `base_url`, and `tools`. It never holds an API key.
+    /// OpenAI needs a realtime `model`. `onEvent` receives `{ event, audio }`.
+    #[napi]
+    pub async fn voice_connect(
+        &self,
+        #[napi(ts_arg_type = "Record<string, unknown>")] config: Value,
+        on_event: ThreadsafeFunction<VoiceEventJs, ()>,
+    ) -> Result<VoiceSession> {
+        voice::connect(
+            superglue::chat::credentials_for(&self.inner.options),
+            config,
+            on_event,
+        )
+        .await
     }
 
     #[napi]

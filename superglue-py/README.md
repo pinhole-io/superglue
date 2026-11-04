@@ -65,9 +65,10 @@ A function that takes one `args: dict` needs an explicit schema.
 - `batch`, hooks, guardrails, and agents match the Rust client.
 - `api_keys` and `requests_per_second_for` select providers. See [`../docs/multi-provider.md`](../docs/multi-provider.md).
 - `upload_file` and `message_with_file_bytes` attach files.
+- `voice_connect` opens a realtime voice session on OpenAI or xAI. `on_event` runs on a native thread. See [`../docs/multi-provider.md`](../docs/multi-provider.md#realtime-voice).
 - Executors (`SimpleExecutor`, `AgentExecutor`, `AgentStructuredExecutor`) exist only in this package.
 
-The native crate is built with the `code` and `mcp` features.
+The native crate is built with the `code`, `mcp`, and `realtime` features.
 
 ## Examples
 

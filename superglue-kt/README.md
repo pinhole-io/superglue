@@ -35,10 +35,11 @@ CI does that. A JVM test must tolerate a missing `.so`.
 
 ```kotlin
 dependencies {
-    implementation("com.superglue.kt:superglue-android:1.1.0")
+    implementation("com.superglue.kt:superglue-android:<version>")
 }
 ```
 
+Replace `<version>` with the release you use.
 The AAR contains `arm64-v8a` and `x86_64`.
 Each GitHub release also stores `superglue-android-<version>.aar`.
 
@@ -62,3 +63,5 @@ JUnit examples and the number map: [examples/README.md](examples/README.md).
 
 The JNI boundary follows `superglue-js/index.d.ts`.
 Clients, tools, hooks, guardrails, streaming, batch, conversations, and the agent engine use the same names.
+`SuperglueClient.voiceConnect(configJson, onEvent)` opens a realtime voice session.
+`VoiceEventCallback` runs on a native thread. See [`../docs/multi-provider.md`](../docs/multi-provider.md#realtime-voice).

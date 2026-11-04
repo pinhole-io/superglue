@@ -13,7 +13,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use crate::agents::{AgentEngine, AgentSpec};
-use crate::audit::{RunRecorder, RunStore, now_ms};
+use crate::audit::{AuditStore, RunRecorder, now_ms};
 use crate::batch::{BatchConfig, BatchError, BatchRequest, BatchResponse, batch_complete};
 use crate::chat::{
     ChatError, ChatOptions, CompletionOutcome, Conversation, StreamOutcome, StreamToolOutcome,
@@ -118,7 +118,7 @@ pub struct ClientBuilder {
     summarize_context: SummarizeContextConfig,
     aaak_compression_enabled: bool,
     aaak_compression_model: Option<String>,
-    audit_store: Option<Arc<RunStore>>,
+    audit_store: Option<Arc<dyn AuditStore>>,
     tool_result_max_chars: Option<usize>,
 }
 
@@ -358,8 +358,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Attach an in-memory audit store; completed chat and Responses turns are recorded automatically.
-    pub fn audit(mut self, store: Arc<RunStore>) -> Self {
+    /// Attach an audit store. Unary chat and Responses turns are recorded automatically.
+    ///
+    /// Each loop step is appended while the turn runs, so a crashed turn can resume.
+    pub fn audit(mut self, store: Arc<dyn AuditStore>) -> Self {
         self.audit_store = Some(store);
         self
     }
@@ -596,7 +598,8 @@ impl Client {
         call: CallOptions,
     ) -> Result<CompletionOutcome, ChatError> {
         let http = effective_http(&self.inner.http, call.timeout, call.connect_timeout)?;
-        let options = finalize_call_options(&self.inner.options, &call);
+        let mut options = finalize_call_options(&self.inner.options, &call);
+        attach_transition_log(&self.inner, &mut options);
         self.ensure_audit_ready().await;
         let started_at_ms = now_ms();
         let result = complete_with_tools(
@@ -608,12 +611,7 @@ impl Client {
             &options,
         )
         .await;
-        if let (Ok(outcome), Some(audit)) = (&result, self.inner.audit.as_ref()) {
-            audit
-                .recorder
-                .record_chat_completion(outcome, &options, started_at_ms)
-                .await;
-        }
+        record_chat_audit(&self.inner, &result, &options, started_at_ms).await;
         result
     }
 
@@ -701,7 +699,8 @@ impl Client {
         call: CallOptions,
     ) -> Result<ResponseOutcome, ResponseError> {
         let http = effective_http(&self.inner.http, call.timeout, call.connect_timeout)?;
-        let options = finalize_call_options(&self.inner.options, &call);
+        let mut options = finalize_call_options(&self.inner.options, &call);
+        attach_transition_log(&self.inner, &mut options);
         self.ensure_audit_ready().await;
         let started_at_ms = now_ms();
         let result = complete_response_with_tools(
@@ -713,11 +712,18 @@ impl Client {
             &options,
         )
         .await;
-        if let (Ok(outcome), Some(audit)) = (&result, self.inner.audit.as_ref()) {
-            audit
-                .recorder
-                .record_response_completion(outcome, &options, started_at_ms)
-                .await;
+        if let Some(audit) = self.inner.audit.as_ref() {
+            match &result {
+                Ok(outcome) => {
+                    audit
+                        .recorder
+                        .record_response_completion(outcome, &options, started_at_ms)
+                        .await;
+                }
+                Err(error) => {
+                    record_audit_failure(&self.inner, &options, response_error_class(error)).await;
+                }
+            }
         }
         result
     }
@@ -857,6 +863,7 @@ impl Client {
             opts.reasoning_effort = Some(re.clone());
         }
         opts.request_id = call.request_id;
+        attach_transition_log(&self.inner, &mut opts);
 
         self.ensure_audit_ready().await;
         let started_at_ms = now_ms();
@@ -866,12 +873,7 @@ impl Client {
             .with_guardrails(guardrails);
 
         let result = engine.run(&http, &registry, user_message, &opts).await;
-        if let (Ok(outcome), Some(audit)) = (&result, self.inner.audit.as_ref()) {
-            audit
-                .recorder
-                .record_chat_completion(outcome, &opts, started_at_ms)
-                .await;
-        }
+        record_chat_audit(&self.inner, &result, &opts, started_at_ms).await;
         result
     }
 
@@ -972,7 +974,8 @@ impl ClientConversation {
 
     pub async fn complete(&mut self, call: CallOptions) -> Result<CompletionOutcome, ChatError> {
         let http = effective_http(&self.inner.http, call.timeout, call.connect_timeout)?;
-        let options = finalize_call_options(&self.inner.options, &call);
+        let mut options = finalize_call_options(&self.inner.options, &call);
+        attach_transition_log(&self.inner, &mut options);
         ensure_client_audit_ready(&self.inner).await;
         let started_at_ms = now_ms();
         let result = self
@@ -985,12 +988,7 @@ impl ClientConversation {
                 &options,
             )
             .await;
-        if let (Ok(outcome), Some(audit)) = (&result, self.inner.audit.as_ref()) {
-            audit
-                .recorder
-                .record_chat_completion(outcome, &options, started_at_ms)
-                .await;
-        }
+        record_chat_audit(&self.inner, &result, &options, started_at_ms).await;
         result
     }
 
@@ -1054,6 +1052,57 @@ fn finalize_call_options(base: &ChatOptions, call: &CallOptions) -> ChatOptions 
         options.reasoning_effort = Some(re.clone());
     }
     options
+}
+
+/// Give an audited call a request id and a step log. Streams stay unrecorded.
+fn attach_transition_log(inner: &ClientInner, options: &mut ChatOptions) {
+    let Some(audit) = inner.audit.as_ref() else {
+        return;
+    };
+    options
+        .request_id
+        .get_or_insert_with(|| uuid::Uuid::new_v4().to_string());
+    options.transition_log = Some(audit.recorder.transition_log(options));
+}
+
+async fn record_chat_audit(
+    inner: &ClientInner,
+    result: &Result<CompletionOutcome, ChatError>,
+    options: &ChatOptions,
+    started_at_ms: i64,
+) {
+    let Some(audit) = inner.audit.as_ref() else {
+        return;
+    };
+    match result {
+        Ok(outcome) => {
+            audit
+                .recorder
+                .record_chat_completion(outcome, options, started_at_ms)
+                .await;
+        }
+        Err(error) => {
+            record_audit_failure(inner, options, crate::chat::chat_error_class(error)).await;
+        }
+    }
+}
+
+async fn record_audit_failure(inner: &ClientInner, options: &ChatOptions, error_type: &str) {
+    if let (Some(audit), Some(request_id)) = (inner.audit.as_ref(), options.request_id.as_deref()) {
+        audit.recorder.record_failure(request_id, error_type).await;
+    }
+}
+
+fn response_error_class(error: &ResponseError) -> &'static str {
+    match error {
+        ResponseError::Chat(chat) => crate::chat::chat_error_class(chat),
+        ResponseError::Http(_) => "http",
+        ResponseError::Serde(_) => "serialization",
+        ResponseError::NoOutput => "no_output",
+        ResponseError::MaxToolRounds(_) => "max_tool_rounds",
+        ResponseError::Cancelled => "cancelled",
+        ResponseError::StreamFailed(_) => "stream_failed",
+    }
 }
 
 async fn ensure_client_audit_ready(inner: &ClientInner) {

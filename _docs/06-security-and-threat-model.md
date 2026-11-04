@@ -33,7 +33,12 @@ Typical goals: ship updates safely and use standard transport security.
 
 Goals: keep prompts and tool output out of disk, crash dumps, and casual logs.
 
-- Keep workflow and audit state in memory when policy allows it. `RunStore` is in memory today.
+- Keep workflow and audit state in memory when policy allows it. Use `MemoryRunStore` for that.
+- `JsonlRunStore` writes prompts, tool arguments, tool output, and model replies to disk in plain text.
+  - It creates the directory with mode `0700` and each file with mode `0600`.
+  - It does not write API keys or headers. Request options are stored without credentials.
+  - It accepts only request ids that match `[A-Za-z0-9_-]+`, so an id cannot leave the directory.
+  - Put the directory on an encrypted volume. Delete old files under your retention policy.
 - `zeroize` and `secrecy` cover API keys. Apply the same pattern to any new secret buffer.
 - `mlock` can reduce swap risk for a specific page. It does not stop every attack.
 - Use rustls and short-lived certificates for a remote control plane.

@@ -77,6 +77,7 @@ use superglue::telemetry::{TelemetryConfig, init_tracing};
 use superglue::tools::{Tool, ToolInvokeError, ToolRegistry, ToolSpec};
 
 mod json_bridge;
+mod voice;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -1213,6 +1214,28 @@ impl PyClient {
             }
         });
         Ok(())
+    }
+
+    /// Open a realtime voice session with this client's credentials.
+    ///
+    /// Args:
+    ///   config (dict): ``provider`` (``"openai"`` or ``"xai"``), ``model``, ``voice``,
+    ///     ``instructions``, ``sample_rate``, ``server_vad``, ``base_url``, and ``tools``.
+    ///     The config never carries an API key. OpenAI needs a realtime ``model``.
+    ///   on_event (callable): Receives one dict per event on a background thread.
+    ///     ``output_audio`` events carry PCM bytes under ``audio``.
+    fn voice_connect(
+        &self,
+        py: Python<'_>,
+        config: Bound<'_, PyAny>,
+        on_event: Py<PyAny>,
+    ) -> PyResult<voice::PyVoiceSession> {
+        voice::connect(
+            py,
+            superglue::chat::credentials_for(&self.options),
+            config,
+            on_event,
+        )
     }
 
     /// Evaluate `state` with TypeSafe System One.
@@ -2637,6 +2660,7 @@ fn _superglue(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<PyUploadedFile>()?;
     m.add_class::<PyClient>()?;
+    m.add_class::<voice::PyVoiceSession>()?;
     m.add_class::<PyConversation>()?;
     m.add_class::<PyCompletionOutcome>()?;
     m.add_class::<PyStreamOutcome>()?;

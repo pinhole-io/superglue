@@ -12,14 +12,18 @@ import com.superglue.kt.JsonCallback
 import com.superglue.kt.SuperglueClient
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * JUnit counterparts for examples 17–21, 28, 32, 34, 35, 37, and the short demo.
+ * JUnit counterparts for examples 17–21, 28, 32, 34–37, and the short demo.
  * Live sections need `OPENAI_API_KEY`, except where a test names another variable.
  */
 class LaterExamplesTest {
@@ -299,6 +303,72 @@ class LaterExamplesTest {
                 println("frustration: ${answers["frustration"]}")
                 println("is_urgent: ${answers["is_urgent"]}")
             }
+    }
+
+    /** Realtime voice with one tool call. The assistant transcript arrives as deltas. */
+    @Test
+    fun example36_realtime_voice() {
+        runLive(36) {
+            val model = System.getenv("OPENAI_REALTIME_MODEL") ?: "gpt-realtime"
+            val config =
+                """
+                {
+                  "provider": "openai",
+                  "model": "$model",
+                  "instructions": "Answer in one short sentence.",
+                  "tools": [{
+                    "name": "lookup_order",
+                    "description": "Return the status of an order by id.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {"order_id": {"type": "string"}},
+                      "required": ["order_id"]
+                    }
+                  }]
+                }
+                """.trimIndent()
+            // The callback runs on a native thread. Hand each event to the test thread.
+            val events = LinkedBlockingQueue<Pair<JsonObject, ByteArray?>>()
+            openExampleClient().use { client ->
+                client.voiceConnect(config) { eventJson, audio ->
+                    events.put(Json.parseToJsonElement(eventJson).jsonObject to audio)
+                }.use { session ->
+                    session.sendText("Use lookup_order for order 42 and tell me its status.")
+                    var audioBytes = 0
+                    val reply = StringBuilder()
+                    var toolCalls = 0
+                    var waitingForToolReply = false
+                    while (true) {
+                        val (event, audio) =
+                            events.poll(60, TimeUnit.SECONDS)
+                                ?: error("no voice event for 60 seconds")
+                        when (event.getValue("type").jsonPrimitive.content) {
+                            "output_audio" -> audioBytes += audio?.size ?: 0
+                            "output_transcript" -> reply.append(event.getValue("text").jsonPrimitive.content)
+                            "function_call" -> {
+                                val callId = event.getValue("call_id").jsonPrimitive.content
+                                val name = event.getValue("name").jsonPrimitive.content
+                                println("tool call: $name(${event.getValue("arguments").jsonPrimitive.content})")
+                                toolCalls += 1
+                                waitingForToolReply = true
+                                // This also asks the model for the next response.
+                                session.submitToolResult(callId, """{"order_id":"42","status":"shipped"}""")
+                            }
+                            "response_done" -> {
+                                if (!waitingForToolReply) break
+                                waitingForToolReply = false
+                            }
+                            "error" -> error("voice error: ${event["message"]}")
+                            "closed" -> break
+                        }
+                    }
+                    println("assistant: $reply")
+                    println("audio: $audioBytes bytes of PCM16")
+                    assertTrue(audioBytes > 0 || reply.isNotEmpty())
+                    assertTrue(toolCalls <= 1)
+                }
+            }
+        }
     }
 
     @Test

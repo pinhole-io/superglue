@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 use superglue::audit::{
-    FinishMetadata, RunRecorder, RunStore, resume_chat, resume_context_from_record, resume_response,
+    AuditStore, FinishMetadata, JsonlRunStore, MemoryRunStore, RunRecorder, resume_chat,
+    resume_context_from_record, resume_response,
 };
 use superglue::chat::ChatOptions;
 use superglue::client::{CallOptions, Client};
@@ -19,8 +20,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn runrecorder_process_events_via_status_subscriber() {
-    let store = Arc::new(RunStore::new(None));
-    let recorder = Arc::new(RunRecorder::new(Arc::clone(&store)));
+    let store = Arc::new(MemoryRunStore::new(None));
+    let recorder = Arc::new(RunRecorder::new(store.clone()));
     let emitter = Arc::new(StatusEmitter::new());
     emitter
         .subscribe(Arc::clone(&recorder) as Arc<dyn StatusSubscriber>)
@@ -312,12 +313,12 @@ async fn client_builder_audit_records_chat_completion() {
         .mount(&server)
         .await;
 
-    let store = Arc::new(RunStore::new(None));
+    let store = Arc::new(MemoryRunStore::new(None));
     let client = Client::builder()
         .api_key("sk-test")
         .base_url(server.uri())
         .model("mock")
-        .audit(Arc::clone(&store))
+        .audit(store.clone())
         .build()
         .unwrap();
 
@@ -347,4 +348,76 @@ async fn client_builder_audit_records_chat_completion() {
             .iter()
             .any(|e| e.stage == "pre_completion")
     );
+}
+
+#[tokio::test]
+async fn client_jsonl_audit_writes_steps_without_secrets() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-jsonl",
+            "model": "mock",
+            "choices": [{
+                "message": { "role": "assistant", "content": "on disk" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5 }
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(JsonlRunStore::open(dir.path()).unwrap());
+    let api_key = "sk-jsonl-secret-value";
+    let client = Client::builder()
+        .api_key(api_key)
+        .base_url(server.uri())
+        .model("mock")
+        .audit(store.clone())
+        .build()
+        .unwrap();
+
+    let out = client
+        .complete("hello disk", CallOptions::default())
+        .await
+        .unwrap();
+
+    let file = dir.path().join(format!("{}.jsonl", out.request_id));
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        !text.contains(api_key),
+        "audit log must not hold the API key"
+    );
+    let kinds: Vec<String> = text
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["kind"].to_string())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "\"run_started\"",
+            "\"message_appended\"",
+            "\"message_appended\"",
+            "\"run_finished\""
+        ]
+    );
+
+    let record = store.get(&out.request_id).await.expect("record replayed");
+    let contents: Vec<_> = record
+        .messages
+        .iter()
+        .map(|m| (m.role.as_str(), m.content.as_deref()))
+        .collect();
+    assert_eq!(
+        contents,
+        [("user", Some("hello disk")), ("assistant", Some("on disk"))]
+    );
+    assert_eq!(
+        record.outcome.and_then(|o| o.content).as_deref(),
+        Some("on disk")
+    );
+    let options_json = record.options_json.expect("options on run_started");
+    assert!(options_json.contains("mock"));
+    assert!(!options_json.contains(api_key));
 }

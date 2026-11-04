@@ -233,6 +233,24 @@ public final class SuperglueNativeJni {
         String requestId
     );
 
+    // --- realtime voice ---
+
+    public static native long clientVoiceConnect(
+        long handle,
+        String configJson,
+        VoiceEventCallback onEvent
+    );
+
+    public static native void voiceSendText(long handle, String text);
+
+    public static native void voiceSendAudio(long handle, byte[] audio);
+
+    public static native void voiceInterrupt(long handle);
+
+    public static native void voiceSubmitToolResult(long handle, String callId, String outputJson);
+
+    public static native void voiceDestroy(long handle);
+
     public static native long clientToolsRegistryPtr(long handle);
 
     public static native long clientHooksRegistryPtr(long handle);

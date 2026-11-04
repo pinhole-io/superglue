@@ -107,6 +107,13 @@ Files use `client.uploadFile(path)` and `messageWithFileBytes` on the facade.
 When tools are registered, `stream()` runs the tool loop.
 Details: [`../docs/multi-provider.md`](../docs/multi-provider.md).
 
+## Voice
+
+`client.voiceConnect(config, onEvent)` opens a realtime voice session on OpenAI or xAI.
+`onEvent` receives `{ event, audio }`. `audio` is a `Buffer` on `output_audio` events.
+The config never holds an API key. The session uses the client key.
+Example: [`examples/36_realtime_voice.mjs`](examples/36_realtime_voice.mjs).
+
 ## Examples
 
 ```bash

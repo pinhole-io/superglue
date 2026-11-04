@@ -137,14 +137,7 @@ pub async fn preflight_async(
     let model = model.to_string();
     let request_id_owned = request_id.to_string();
     db.run_blocking(move |db| {
-        preflight(
-            db,
-            &auth,
-            &user_id,
-            &model,
-            &request_id_owned,
-            estimate_usd,
-        )
+        preflight(db, &auth, &user_id, &model, &request_id_owned, estimate_usd)
     })
     .await?;
     Ok(BudgetGuard::arm(db.clone(), request_id))
@@ -155,12 +148,7 @@ fn responses_prompt_chars(body: &GatewayResponsesBody) -> usize {
         Value::String(text) => text.len(),
         other => other.to_string().len(),
     };
-    input_chars
-        + body
-            .instructions
-            .as_ref()
-            .map(String::len)
-            .unwrap_or(0)
+    input_chars + body.instructions.as_ref().map(String::len).unwrap_or(0)
 }
 
 fn responses_max_completion(body: &GatewayResponsesBody) -> Option<u32> {
@@ -174,11 +162,7 @@ fn responses_max_completion(body: &GatewayResponsesBody) -> Option<u32> {
         })
 }
 
-fn hold_estimate(
-    model: &str,
-    prompt_chars: usize,
-    max_completion_tokens: Option<u32>,
-) -> f64 {
+fn hold_estimate(model: &str, prompt_chars: usize, max_completion_tokens: Option<u32>) -> f64 {
     if proxy_provider::is_proxy_model(model) {
         return 0.0;
     }

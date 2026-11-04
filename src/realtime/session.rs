@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::error::VoiceError;
 use super::events::{VoiceClientEvent, VoiceEvent};
-use super::provider::resolve_voice_provider;
+use super::provider::{PlaybackState, VoiceProvider, resolve_voice_provider};
 
 /// Configuration shared by realtime provider adapters.
 #[derive(Debug, Clone)]
@@ -52,6 +52,31 @@ impl VoiceConfig {
             status_emitter: None,
         }
     }
+
+    /// OpenAI Realtime over WebSocket. `model` is a realtime model such as `gpt-realtime`.
+    #[must_use]
+    pub fn openai(
+        credentials: crate::providers::ProviderCredentials,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider: crate::providers::ProviderId::OpenAi,
+            model: model.into(),
+            voice: "marin".to_string(),
+            instructions: "You are a helpful assistant.".to_string(),
+            input_format: "audio/pcm".to_string(),
+            output_format: "audio/pcm".to_string(),
+            sample_rate: 24_000,
+            server_vad: true,
+            resumption_enabled: false,
+            conversation_id: None,
+            tools: Vec::new(),
+            credentials,
+            base_url: None,
+            cancel: CancellationToken::new(),
+            status_emitter: None,
+        }
+    }
 }
 
 /// A connected session. The handle is safe to move between tasks.
@@ -75,6 +100,15 @@ impl VoiceEvents {
     pub async fn recv(&mut self) -> Option<VoiceEvent> {
         self.receiver.recv().await
     }
+
+    /// Wait for the next event on a thread outside the async runtime.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from an async execution context.
+    pub fn blocking_recv(&mut self) -> Option<VoiceEvent> {
+        self.receiver.blocking_recv()
+    }
 }
 
 impl VoiceSession {
@@ -87,7 +121,7 @@ impl VoiceSession {
         let mut socket = provider.connect(&config).await?;
         socket
             .send(tokio_tungstenite::tungstenite::Message::Text(
-                super::xai::session_update(&config).to_string().into(),
+                provider.session_update(&config).to_string().into(),
             ))
             .await?;
 
@@ -97,6 +131,7 @@ impl VoiceSession {
         let cancel = config.cancel.clone();
         let status_emitter = config.status_emitter.clone();
         let model = config.model.clone();
+        let sample_rate = config.sample_rate;
         let request_id = uuid::Uuid::new_v4().to_string();
 
         tokio::spawn(async move {
@@ -112,7 +147,7 @@ impl VoiceSession {
             let _ = event_tx
                 .send(VoiceEvent::SessionCreated { session_id: None })
                 .await;
-            let mut decode = DecodeState::default();
+            let mut decode = DecodeState::new(sample_rate);
             loop {
                 tokio::select! {
                     biased;
@@ -145,7 +180,14 @@ impl VoiceSession {
                                 break;
                             }
                             Some(command) => {
-                                if let Err(error) = send_client_event(&mut writer, command).await {
+                                if let Err(error) = send_client_event(
+                                    &mut writer,
+                                    provider.as_ref(),
+                                    &decode.playback,
+                                    command,
+                                )
+                                .await
+                                {
                                     let _ = event_tx.send(VoiceEvent::Error { message: error.to_string() }).await;
                                     break;
                                 }
@@ -236,63 +278,78 @@ impl VoiceSession {
     }
 }
 
-async fn send_client_event<W>(writer: &mut W, event: VoiceClientEvent) -> Result<(), VoiceError>
+async fn send_client_event<W>(
+    writer: &mut W,
+    provider: &dyn VoiceProvider,
+    playback: &PlaybackState,
+    event: VoiceClientEvent,
+) -> Result<(), VoiceError>
 where
     W: futures_util::Sink<tokio_tungstenite::tungstenite::Message> + Unpin,
     W::Error: Into<tokio_tungstenite::tungstenite::Error>,
 {
     use tokio_tungstenite::tungstenite::Message;
-    let requests_response = matches!(&event, VoiceClientEvent::Text(_));
-    let message = match event {
-        VoiceClientEvent::Update(value) => Message::Text(value.to_string().into()),
-        VoiceClientEvent::Audio(audio) => Message::Binary(audio),
-        VoiceClientEvent::Text(text) => Message::Text(
-            json!({
+    let text = |value: Value| Message::Text(value.to_string().into());
+    let messages = match event {
+        VoiceClientEvent::Update(value) => vec![text(value)],
+        VoiceClientEvent::Audio(audio) => vec![provider.encode_audio(audio)],
+        VoiceClientEvent::Text(input) => vec![
+            text(json!({
                 "type": "conversation.item.create",
                 "item": {
                     "type": "message",
                     "role": "user",
-                    "content": [{"type": "input_text", "text": text}]
+                    "content": [{"type": "input_text", "text": input}]
                 }
-            })
-            .to_string()
-            .into(),
-        ),
-        VoiceClientEvent::Interrupt => {
-            Message::Text(json!({"type": "response.cancel"}).to_string().into())
-        }
-        VoiceClientEvent::CreateResponse => {
-            Message::Text(json!({"type": "response.create"}).to_string().into())
-        }
-        VoiceClientEvent::ToolResult { call_id, output } => Message::Text(
-            json!({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": output.to_string()
-                }
-            })
-            .to_string()
-            .into(),
-        ),
-        VoiceClientEvent::Close => Message::Close(None),
+            })),
+            text(json!({"type": "response.create"})),
+        ],
+        VoiceClientEvent::Interrupt => provider.interrupt(playback).into_iter().map(text).collect(),
+        VoiceClientEvent::CreateResponse => vec![text(json!({"type": "response.create"}))],
+        VoiceClientEvent::ToolResult { call_id, output } => vec![text(json!({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output.to_string()
+            }
+        }))],
+        VoiceClientEvent::Close => vec![Message::Close(None)],
     };
-    writer.send(message).await.map_err(Into::into)?;
-    if requests_response {
-        writer
-            .send(Message::Text(
-                json!({"type": "response.create"}).to_string().into(),
-            ))
-            .await
-            .map_err(Into::into)?;
+    for message in messages {
+        writer.send(message).await.map_err(Into::into)?;
     }
     Ok(())
 }
 
-#[derive(Default)]
 struct DecodeState {
     saw_binary_audio: bool,
+    sample_rate: u32,
+    audio_bytes: u64,
+    playback: PlaybackState,
+}
+
+impl DecodeState {
+    fn new(sample_rate: u32) -> Self {
+        Self {
+            saw_binary_audio: false,
+            sample_rate,
+            audio_bytes: 0,
+            playback: PlaybackState::default(),
+        }
+    }
+
+    /// Count delivered PCM16 mono audio: two bytes per sample.
+    fn add_audio(&mut self, bytes: usize) {
+        self.audio_bytes = self.audio_bytes.saturating_add(bytes as u64);
+        let bytes_per_second = u64::from(self.sample_rate.max(1)) * 2;
+        self.playback.audio_ms = self.audio_bytes.saturating_mul(1000) / bytes_per_second;
+    }
+
+    fn reset_playback(&mut self) {
+        self.audio_bytes = 0;
+        self.playback = PlaybackState::default();
+    }
 }
 
 async fn forward_server_message(
@@ -304,6 +361,7 @@ async fn forward_server_message(
     match message {
         Message::Binary(bytes) => {
             decode.saw_binary_audio = true;
+            decode.add_audio(bytes.len());
             events
                 .send(VoiceEvent::OutputAudio(bytes))
                 .await
@@ -329,12 +387,15 @@ async fn forward_server_message(
 
 fn normalize_server_event(
     payload: &Value,
-    decode: &DecodeState,
+    decode: &mut DecodeState,
 ) -> Result<Option<VoiceEvent>, VoiceError> {
     let event_type = payload
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(|| VoiceError::Protocol("server event has no type".to_string()))?;
+    if matches!(event_type, "response.created" | "response.done") {
+        decode.reset_playback();
+    }
     let text = |key: &str| {
         payload
             .get(key)
@@ -381,6 +442,10 @@ fn normalize_server_event(
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(encoded)
                     .map_err(|error| VoiceError::Protocol(error.to_string()))?;
+                if let Some(item_id) = payload.get("item_id").and_then(Value::as_str) {
+                    decode.playback.item_id = Some(item_id.to_string());
+                }
+                decode.add_audio(decoded.len());
                 Some(VoiceEvent::OutputAudio(Bytes::from(decoded)))
             }
         }
@@ -461,8 +526,48 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn openai_session_sends_ga_update_and_base64_audio() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let mut frames = Vec::new();
+            for _ in 0..2 {
+                match socket.next().await {
+                    Some(Ok(Message::Text(text))) => {
+                        frames.push(serde_json::from_str::<Value>(&text).unwrap());
+                    }
+                    other => panic!("expected a text frame, got {other:?}"),
+                }
+            }
+            frames
+        });
+
+        let mut credentials = crate::providers::ProviderCredentials::new();
+        credentials.insert_key(crate::providers::ProviderId::OpenAi, "test-key");
+        let mut config = VoiceConfig::openai(credentials, "gpt-realtime");
+        config.base_url = Some(format!("ws://{address}"));
+        let (session, _events) = VoiceSession::connect(config).await.unwrap();
+        session
+            .send_audio(Bytes::from_static(b"pcm"))
+            .await
+            .unwrap();
+
+        let frames = timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frames[0]["type"], "session.update");
+        assert_eq!(frames[0]["session"]["type"], "realtime");
+        assert_eq!(frames[1]["type"], "input_audio_buffer.append");
+        assert_eq!(frames[1]["audio"], "cGNt");
+        let _ = session.close().await;
+    }
+
     fn normalize(payload: Value) -> Option<VoiceEvent> {
-        normalize_server_event(&payload, &DecodeState::default()).unwrap()
+        normalize_server_event(&payload, &mut DecodeState::new(24_000)).unwrap()
     }
 
     #[test]
@@ -512,17 +617,44 @@ mod tests {
             .is_none()
         );
 
-        let decode = DecodeState {
-            saw_binary_audio: true,
-        };
+        let mut decode = DecodeState::new(24_000);
+        decode.saw_binary_audio = true;
         let skipped = normalize_server_event(
             &json!({
                 "type": "response.output_audio.delta",
                 "delta": "cGNt"
             }),
-            &decode,
+            &mut decode,
         )
         .unwrap();
         assert!(skipped.is_none());
+    }
+
+    #[test]
+    fn tracks_delivered_audio_for_truncate() {
+        let mut decode = DecodeState::new(24_000);
+        // 4800 bytes of PCM16 at 24 kHz is 100 ms.
+        let chunk = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 4800]);
+        for _ in 0..2 {
+            normalize_server_event(
+                &json!({
+                    "type": "response.output_audio.delta",
+                    "item_id": "item-7",
+                    "delta": chunk
+                }),
+                &mut decode,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            decode.playback,
+            PlaybackState {
+                item_id: Some("item-7".into()),
+                audio_ms: 200
+            }
+        );
+
+        normalize_server_event(&json!({"type": "response.done"}), &mut decode).unwrap();
+        assert_eq!(decode.playback, PlaybackState::default());
     }
 }

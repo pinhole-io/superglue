@@ -45,6 +45,14 @@ export declare class Client {
   addBlocklistGuardrail(patterns: Array<string>, action?: string | undefined | null, stage?: string | undefined | null, name?: string | undefined | null): Promise<void>
   addMaxLengthGuardrail(maxInput?: number | undefined | null, maxOutput?: number | undefined | null, strategy?: string | undefined | null, name?: string | undefined | null): Promise<void>
   addPiiGuardrail(stage?: string | undefined | null, name?: string | undefined | null): Promise<void>
+  /**
+   * Open a realtime voice session with this client's credentials.
+   *
+   * `config` holds `provider` (`"openai"` or `"xai"`), `model`, `voice`, `instructions`,
+   * `sample_rate`, `server_vad`, `base_url`, and `tools`. It never holds an API key.
+   * OpenAI needs a realtime `model`. `onEvent` receives `{ event, audio }`.
+   */
+  voiceConnect(config: Record<string, unknown>, onEvent: ((err: Error | null, arg: VoiceEventJs) => void)): Promise<VoiceSession>
   systemOne(state: unknown, questions: Record<string, unknown>, model?: string | undefined | null): Promise<any>
   addTypesafeGuardrail(policy: Record<string, unknown>, stage?: string | undefined | null, name?: string | undefined | null): Promise<void>
   runAgent(spec: AgentSpecJs, userMessage: string, timeoutSecs?: number | undefined | null, connectTimeoutSecs?: number | undefined | null, requestId?: string | undefined | null): Promise<CompletionOutcomeJs>
@@ -71,6 +79,20 @@ export declare class Conversation {
 export declare class StatusEmitterJs {
   constructor()
   subscribe(callback: StatusCallback): void
+}
+
+/** A connected realtime voice session. Create it with `Client.voiceConnect`. */
+export declare class VoiceSession {
+  /** Send a user text message and request a response. */
+  sendText(text: string): Promise<void>
+  /** Send one frame of PCM16 mono audio at the session sample rate. */
+  sendAudio(audio: Buffer): Promise<void>
+  /** Stop the current response. */
+  interrupt(): Promise<void>
+  /** Return a tool result for a `function_call` event and request the next response. */
+  submitToolResult(callId: string, output: unknown): Promise<void>
+  /** Close the provider connection. A closed session rejects later commands. */
+  close(): Promise<void>
 }
 
 export interface BatchRequestJs {
@@ -140,3 +162,9 @@ export interface UploadedFileJs {
 }
 
 export declare function version(): string
+
+/** One realtime event. `audio` holds PCM bytes for an `output_audio` event. */
+export interface VoiceEventJs {
+  event: Record<string, unknown>
+  audio?: Buffer
+}
