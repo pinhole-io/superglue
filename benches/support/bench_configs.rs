@@ -2,8 +2,6 @@
 
 use superglue::tools::ToolMode;
 
-use super::conversation_profiles::ConversationProfile;
-
 /// One row in the comparison benchmark matrix.
 pub struct BenchConfig {
     pub label: &'static str,
@@ -39,16 +37,6 @@ impl BenchConfig {
             (ToolMode::Dynamic, true, true) => ConfigKind::Combined,
             (ToolMode::Dynamic, true, false) => ConfigKind::Dynamic,
             (ToolMode::Code, true, _) => ConfigKind::Code,
-        }
-    }
-
-    /// Expected max tools array length per LLM request (9-tool fixture).
-    #[must_use]
-    pub fn expected_peak_tools(&self, profile: ConversationProfile) -> usize {
-        match self.tool_mode {
-            ToolMode::Standard => 9,
-            ToolMode::Dynamic => profile.expected_tools().len() + 1,
-            ToolMode::Code => 2,
         }
     }
 }

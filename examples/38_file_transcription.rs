@@ -29,13 +29,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !audio::supports_transcription(provider) {
         return Err(format!("file transcription is not supported for {provider}").into());
     }
+    let credentials = ProviderCredentials::from_env();
+    if !credentials.has_key(provider) {
+        println!(
+            "Skip file transcription example (set {})",
+            provider.env_var_for_key()
+        );
+        return Ok(());
+    }
     let model = default_transcription_model(provider).unwrap_or("unknown");
     let filename = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("audio.wav");
     let bytes = std::fs::read(&path)?;
-    let credentials = ProviderCredentials::from_env();
     let http = HttpClient::new(ClientConfig::default())?;
     let transcript = audio::transcribe(&http, &credentials, provider, filename, bytes).await?;
 

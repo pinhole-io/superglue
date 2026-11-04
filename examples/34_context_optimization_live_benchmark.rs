@@ -25,11 +25,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use bench_configs::{BENCH_CONFIGS, ConfigKind};
-use bench_report::{
-    BenchmarkRow, LIVE_BENCHMARK_NOTE, MultiTurnReport, print_benchmark_table,
-    print_multiturn_table,
-};
+use bench_configs::{BENCH_CONFIGS, BenchConfig, ConfigKind};
+use bench_report::{BenchmarkRow, MultiTurnReport, print_benchmark_table, print_multiturn_table};
 use context_tools::register_context_optimization_tools;
 use conversation_profiles::aaak_compression_enabled_multiturn;
 use conversation_profiles::{
@@ -39,7 +36,25 @@ use conversation_profiles::{
 use fat_context_tools::register_fat_context_optimization_tools;
 use superglue::events::{ProcessEvent, ProcessEventKind, StatusEmitter, StatusSubscriber};
 use superglue::openai::ChatMessage;
+use superglue::tools::ToolMode;
 use support::{base_url, model, require_api_key};
+
+/// Printed once at the start of the live benchmark.
+const LIVE_BENCHMARK_NOTE: &str = "Note: Three benchmark sections — (1) single-turn tool chains: headline \
+metric is cumulative total tokens across all LLM rounds (GlueLLM parity); (2) fat payloads: same chains with \
+a bulky `raw` dump per tool (API/file-sized), where code mode should win by returning reduced JSON; \
+(3) multi-turn conversation: headline metric is final context size after 12 turns with history fed forward. \
+Condense configs enable summarize_context; standard/dynamic do not. Use example 33 (wiremock) for \
+deterministic comparisons. Results vary by model.";
+
+/// Expected max tools array length per LLM request (9-tool fixture).
+fn expected_peak_tools(cfg: &BenchConfig, profile: ConversationProfile) -> usize {
+    match cfg.tool_mode {
+        ToolMode::Standard => 9,
+        ToolMode::Dynamic => profile.expected_tools().len() + 1,
+        ToolMode::Code => 2,
+    }
+}
 
 struct CumulativeTokenCollector {
     prompt: AtomicU32,
@@ -188,7 +203,7 @@ async fn run_live_config(
                 llm_rounds: 0,
                 tool_calls: 0,
                 peak_context_msgs: 0,
-                peak_tools: cfg.expected_peak_tools(profile),
+                peak_tools: expected_peak_tools(cfg, profile),
                 cum_prompt_tokens: 0,
                 cum_total_tokens: 0,
                 history_bytes: 0,
@@ -209,7 +224,7 @@ async fn run_live_config(
             llm_rounds: 0,
             tool_calls: 0,
             peak_context_msgs: 0,
-            peak_tools: cfg.expected_peak_tools(profile),
+            peak_tools: expected_peak_tools(cfg, profile),
             cum_prompt_tokens: 0,
             cum_total_tokens: 0,
             history_bytes: 0,
@@ -272,7 +287,7 @@ async fn run_live_config(
                 llm_rounds: outcome.rounds,
                 tool_calls,
                 peak_context_msgs: outcome.messages.len(),
-                peak_tools: cfg.expected_peak_tools(profile),
+                peak_tools: expected_peak_tools(cfg, profile),
                 cum_prompt_tokens: cum_prompt,
                 cum_total_tokens: cum_total,
                 history_bytes,
@@ -287,7 +302,7 @@ async fn run_live_config(
                 llm_rounds: 0,
                 tool_calls: 0,
                 peak_context_msgs: 0,
-                peak_tools: cfg.expected_peak_tools(profile),
+                peak_tools: expected_peak_tools(cfg, profile),
                 cum_prompt_tokens: 0,
                 cum_total_tokens: 0,
                 history_bytes: 0,

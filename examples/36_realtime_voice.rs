@@ -16,19 +16,27 @@ use superglue::providers::{ProviderCredentials, ProviderId};
 use superglue::realtime::{VoiceConfig, VoiceEvent, VoiceSession};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-fn voice_config() -> Result<VoiceConfig, Box<dyn std::error::Error>> {
+fn voice_config() -> Result<Option<VoiceConfig>, Box<dyn std::error::Error>> {
     let credentials = ProviderCredentials::from_env();
     let provider = std::env::var("SUPERGLUE_VOICE_PROVIDER").unwrap_or_else(|_| "xai".into());
     match provider.as_str() {
         "xai" => {
-            credentials.key_for(ProviderId::Xai)?;
-            Ok(VoiceConfig::xai(credentials))
+            if !credentials.has_key(ProviderId::Xai) {
+                println!(
+                    "Skip realtime voice example (set XAI_API_KEY, or SUPERGLUE_VOICE_PROVIDER=openai with OPENAI_API_KEY)"
+                );
+                return Ok(None);
+            }
+            Ok(Some(VoiceConfig::xai(credentials)))
         }
         "openai" => {
-            credentials.key_for(ProviderId::OpenAi)?;
+            if !credentials.has_key(ProviderId::OpenAi) {
+                println!("Skip realtime voice example (set OPENAI_API_KEY)");
+                return Ok(None);
+            }
             let model =
                 std::env::var("OPENAI_REALTIME_MODEL").unwrap_or_else(|_| "gpt-realtime".into());
-            Ok(VoiceConfig::openai(credentials, model))
+            Ok(Some(VoiceConfig::openai(credentials, model)))
         }
         other => Err(format!("SUPERGLUE_VOICE_PROVIDER must be xai or openai, not {other}").into()),
     }
@@ -36,7 +44,9 @@ fn voice_config() -> Result<VoiceConfig, Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = voice_config()?;
+    let Some(config) = voice_config()? else {
+        return Ok(());
+    };
     let cancel = config.cancel.clone();
     let (session, mut events) = VoiceSession::connect(config).await?;
 

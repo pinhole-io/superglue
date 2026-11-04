@@ -30,7 +30,6 @@ const COMPLETION_TOKENS_ESTIMATE: u32 = 50;
 #[derive(Debug, Clone, Default)]
 pub struct MultiTurnMetrics {
     pub per_turn_context_msgs: Vec<usize>,
-    pub per_turn_context_tokens: Vec<u32>,
     pub final_context_msgs: usize,
     pub final_context_tokens: u32,
     pub peak_context_tokens: u32,
@@ -332,7 +331,6 @@ pub async fn run_multiturn_wiremock(cfg: &BenchConfig) -> Result<MultiTurnMetric
 
     Ok(MultiTurnMetrics {
         per_turn_context_msgs,
-        per_turn_context_tokens,
         final_context_msgs,
         final_context_tokens,
         peak_context_tokens,
