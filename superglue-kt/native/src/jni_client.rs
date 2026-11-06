@@ -628,6 +628,156 @@ pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientSys
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientJudge(
+    mut env: JNIEnv,
+    _cl: JClass,
+    handle: jlong,
+    config_json: JString,
+    state_json: JString,
+    items_json: JString,
+) -> jstring {
+    let state = match get_client(handle as u64) {
+        Ok(s) => s,
+        Err(e) => {
+            jthrow(&mut env, &e);
+            return std::ptr::null_mut();
+        }
+    };
+    let config_raw = jstring_to_rust(&mut env, &config_json).unwrap_or_default();
+    let state_raw = jstring_to_rust(&mut env, &state_json).unwrap_or_else(|_| "\"\"".to_string());
+    let items_raw = jstring_to_rust(&mut env, &items_json).unwrap_or_else(|_| "[]".to_string());
+    let config = match superglue::judge::JudgeConfig::from_json(&config_raw) {
+        Ok(config) => config,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let state_value: Value = match serde_json::from_str(&state_raw) {
+        Ok(value) => value,
+        Err(_) => {
+            jthrow(&mut env, "judge state is invalid");
+            return std::ptr::null_mut();
+        }
+    };
+    let judge_state: superglue::systemone::State = match serde_json::from_value(state_value) {
+        Ok(value) => value,
+        Err(_) => {
+            jthrow(&mut env, "judge state is invalid");
+            return std::ptr::null_mut();
+        }
+    };
+    let items = if items_raw.trim().is_empty() {
+        Vec::new()
+    } else {
+        match serde_json::from_str::<Vec<superglue::judge::JudgeItem>>(&items_raw) {
+            Ok(items) => items,
+            Err(_) => {
+                jthrow(&mut env, "judge items are invalid");
+                return std::ptr::null_mut();
+            }
+        }
+    };
+    let creds = superglue::chat::credentials_for(&state.options);
+    let verdict = match runtime().block_on(superglue::judge::run(
+        &state.http,
+        &creds,
+        &config,
+        superglue::judge::JudgeInput {
+            state: judge_state,
+            items,
+        },
+        superglue::judge::JudgeOverrides::default(),
+    )) {
+        Ok(verdict) => verdict,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let encoded = match serde_json::to_string(&verdict) {
+        Ok(encoded) => encoded,
+        Err(_) => {
+            jthrow(&mut env, "judge verdict is invalid");
+            return std::ptr::null_mut();
+        }
+    };
+    jstr_from_str(&mut env, &encoded)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientCompleteObject(
+    mut env: JNIEnv,
+    _cl: JClass,
+    handle: jlong,
+    user_message: JString,
+    schema_json: JString,
+    timeout_secs: i64,
+    connect_timeout_secs: i64,
+    request_id: JString,
+    reasoning_effort: JString,
+) -> jstring {
+    let state = match get_client(handle as u64) {
+        Ok(s) => s,
+        Err(e) => {
+            jthrow(&mut env, &e);
+            return std::ptr::null_mut();
+        }
+    };
+    let user_message = jstring_to_rust(&mut env, &user_message).unwrap_or_default();
+    let schema_raw = jstring_to_rust(&mut env, &schema_json).unwrap_or_default();
+    let format: superglue::openai::JsonSchemaFormat = match serde_json::from_str(&schema_raw) {
+        Ok(format) => format,
+        Err(_) => {
+            jthrow(&mut env, "object schema is invalid");
+            return std::ptr::null_mut();
+        }
+    };
+    let http = match effective_http(
+        &state.http,
+        opt_i64(timeout_secs),
+        opt_i64(connect_timeout_secs),
+    ) {
+        Ok(h) => h,
+        Err(e) => {
+            jthrow(&mut env, &e);
+            return std::ptr::null_mut();
+        }
+    };
+    let reg = Arc::clone(&state.registry);
+    let hooks = Arc::clone(&state.hooks);
+    let gds = Arc::clone(&state.guardrails);
+    let options = finalize_call_options(
+        &state.options,
+        opt_request_id(&mut env, &request_id),
+        opt_reasoning_effort(&mut env, &reasoning_effort),
+    );
+    let object = match runtime().block_on(superglue::structured::complete_object(
+        &http,
+        &reg,
+        &hooks,
+        &gds,
+        &user_message,
+        &format,
+        &options,
+    )) {
+        Ok(object) => object,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let encoded = match serde_json::to_string(&object.value) {
+        Ok(encoded) => encoded,
+        Err(_) => {
+            jthrow(&mut env, "object value is invalid");
+            return std::ptr::null_mut();
+        }
+    };
+    jstr_from_str(&mut env, &encoded)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientAddTypesafeGuardrail(
     mut env: JNIEnv,
     _cl: JClass,

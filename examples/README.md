@@ -64,6 +64,8 @@ Set `OPENAI_BASE_URL` yourself when you want a specific host. See `08_custom_bas
 | 37 | TypeSafe System One | yes | yes | yes | `example37_systemone` |
 | 38 | File transcription | yes | | | |
 | 39 | JSONL run store and resume | yes | | | |
+| 40 | Judge config | yes | | | |
+| 41 | Structured output | yes | | | |
 | demo | Short demo | yes | yes | yes | `example_demo` |
 
 Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
@@ -78,6 +80,8 @@ Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
 | `37_systemone` | `TYPESAFE_API_KEY` |
 | `38_file_transcription` | Needs `XAI_API_KEY` by default. Skips when that key is unset. Uses `examples/sample.mp3` unless you pass another path. Set `SUPERGLUE_STT_PROVIDER` to `openai` or `groq` for those keys. |
 | `39_jsonl_resume` | `OPENAI_API_KEY`. Writes to a temporary directory. The example crashes a child run, then resumes it. |
+| `40_judge` | `TYPESAFE_API_KEY` |
+| `41_structured_output` | `OPENAI_API_KEY` |
 
 ## Rust `Client`
 

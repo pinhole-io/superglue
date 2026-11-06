@@ -687,6 +687,10 @@ pub enum ChatError {
     UnsupportedModelCapability(crate::providers::ModelCapability),
     #[error("API response failed: {0}")]
     Api(String),
+    /// The assistant text was not valid JSON, or it missed the schema.
+    /// The string is a short kind and a schema path. It does not include model text.
+    #[error("structured output failed: {0}")]
+    Object(String),
     /// Tool loop ended before a successful completion; carries transcript for persistence.
     #[error("{cause}")]
     PartialTurn {
@@ -1361,6 +1365,7 @@ pub(crate) fn chat_error_class(error: &ChatError) -> &'static str {
         ChatError::UnsupportedProvider(_) => "unsupported_provider",
         ChatError::UnsupportedModelCapability(_) => "unsupported_model_capability",
         ChatError::Api(_) => "api",
+        ChatError::Object(_) => "object",
         ChatError::PartialTurn { .. } => "partial_turn",
     }
 }

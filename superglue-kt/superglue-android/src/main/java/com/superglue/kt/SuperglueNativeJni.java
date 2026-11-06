@@ -69,6 +69,23 @@ public final class SuperglueNativeJni {
         String model
     );
 
+    public static native String clientJudge(
+        long handle,
+        String configJson,
+        String stateJson,
+        String itemsJson
+    );
+
+    public static native String clientCompleteObject(
+        long handle,
+        String userMessage,
+        String schemaJson,
+        long timeoutSecs,
+        long connectTimeoutSecs,
+        String requestId,
+        String reasoningEffort
+    );
+
     public static native void clientAddTypesafeGuardrail(
         long handle,
         String policyJson,

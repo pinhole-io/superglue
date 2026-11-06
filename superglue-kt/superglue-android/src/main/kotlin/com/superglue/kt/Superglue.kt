@@ -591,6 +591,34 @@ public class SuperglueClient
             SuperglueNativeJni.clientSystemOne(handle, stateJson, questionsJson, model)
                 ?: throw SuperglueException("systemOne failed")
 
+        /** Run a judge config and return the mapped verdict JSON. */
+        public fun judge(
+            configJson: String,
+            stateJson: String,
+            itemsJson: String = "[]",
+        ): String =
+            SuperglueNativeJni.clientJudge(handle, configJson, stateJson, itemsJson)
+                ?: throw SuperglueException("judge failed")
+
+        /** Complete one turn and return a JSON object that matches `schemaJson` (`{name, schema}`). A bad object retries once. */
+        public fun completeObject(
+            userMessage: String,
+            schemaJson: String,
+            timeoutSecs: Long = -1L,
+            connectTimeoutSecs: Long = -1L,
+            requestId: String? = null,
+            reasoningEffort: String? = null,
+        ): String =
+            SuperglueNativeJni.clientCompleteObject(
+                handle,
+                userMessage,
+                schemaJson,
+                timeoutSecs,
+                connectTimeoutSecs,
+                requestId.orEmpty(),
+                reasoningEffort.orEmpty(),
+            ) ?: throw SuperglueException("completeObject failed")
+
         public fun addTypesafeGuardrail(
             policyJson: String,
             stage: String = GuardSide.BOTH,

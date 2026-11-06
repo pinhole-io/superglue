@@ -713,6 +713,43 @@ class Client:
         """
         return self._rust.system_one(state, questions, model=model)
 
+    def judge(
+        self,
+        config: dict[str, Any],
+        state: Any,
+        items: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Run a judge config and return the mapped verdict.
+
+        ``config`` names the questions, the thresholds, and each output value.
+        ``items`` supplies ids and options for a repeat template.
+        """
+        return self._rust.judge(config, state, items)
+
+    def complete_object(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        *,
+        timeout_secs: int | None = None,
+        connect_timeout_secs: int | None = None,
+        request_id: str | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+    ) -> Any:
+        """Complete one turn and return a JSON object that matches ``schema``.
+
+        ``schema`` is ``{name, schema, description?, strict?}``.
+        A bad schema fails before any provider call. A bad object retries once.
+        """
+        return self._rust.complete_object(
+            prompt,
+            schema,
+            timeout_secs=timeout_secs,
+            connect_timeout_secs=connect_timeout_secs,
+            request_id=request_id,
+            reasoning_effort=reasoning_effort,
+        )
+
     def voice_connect(
         self,
         config: dict[str, Any],

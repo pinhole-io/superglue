@@ -970,6 +970,80 @@ impl Client {
         serde_json::to_value(response).map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Run a judge config and return the mapped verdict.
+    ///
+    /// `config` names the questions, the thresholds, and each output value.
+    /// `items` supplies `{ id, options?, levels? }` for a repeat template.
+    #[napi]
+    pub async fn judge(
+        &self,
+        #[napi(ts_arg_type = "Record<string, unknown>")] config: Value,
+        #[napi(ts_arg_type = "unknown")] state: Value,
+        #[napi(ts_arg_type = "Array<Record<string, unknown>> | undefined | null")] items: Option<
+            Value,
+        >,
+    ) -> Result<Value> {
+        let config: superglue::judge::JudgeConfig = serde_json::from_value(config)
+            .map_err(|_| Error::from_reason("judge config is invalid"))?;
+        config
+            .validate()
+            .map_err(|err| Error::from_reason(err.to_string()))?;
+        let state: superglue::systemone::State = serde_json::from_value(state)
+            .map_err(|_| Error::from_reason("judge state is invalid"))?;
+        let items = match items {
+            None => Vec::new(),
+            Some(value) if value.is_null() => Vec::new(),
+            Some(value) => serde_json::from_value(value)
+                .map_err(|_| Error::from_reason("judge items are invalid"))?,
+        };
+        let creds = superglue::chat::credentials_for(&self.inner.options);
+        let verdict = superglue::judge::run(
+            &self.inner.http,
+            &creds,
+            &config,
+            superglue::judge::JudgeInput { state, items },
+            superglue::judge::JudgeOverrides::default(),
+        )
+        .await
+        .map_err(|err| Error::from_reason(err.to_string()))?;
+        serde_json::to_value(verdict).map_err(|err| Error::from_reason(err.to_string()))
+    }
+
+    /// Complete one turn and return a JSON object that matches `schema`.
+    ///
+    /// `schema` is `{ name, schema, description?, strict? }`.
+    /// A bad schema fails before any provider call. A bad object retries once.
+    #[napi]
+    pub async fn complete_object(
+        &self,
+        user_message: String,
+        #[napi(ts_arg_type = "Record<string, unknown>")] schema: Value,
+        timeout_secs: Option<i64>,
+        connect_timeout_secs: Option<i64>,
+        request_id: Option<String>,
+        reasoning_effort: Option<String>,
+    ) -> Result<Value> {
+        let format: superglue::openai::JsonSchemaFormat = serde_json::from_value(schema)
+            .map_err(|_| Error::from_reason("object schema is invalid"))?;
+        let http = effective_http(&self.inner.http, timeout_secs, connect_timeout_secs)?;
+        let registry = Arc::clone(&self.inner.registry);
+        let hooks = Arc::clone(&self.inner.hooks);
+        let guardrails = Arc::clone(&self.inner.guardrails);
+        let options = finalize_call_options(&self.inner.options, request_id, reasoning_effort);
+        let object = superglue::structured::complete_object(
+            &http,
+            &registry,
+            &hooks,
+            &guardrails,
+            &user_message,
+            &format,
+            &options,
+        )
+        .await
+        .map_err(|err| Error::from_reason(err.to_string()))?;
+        Ok(object.value)
+    }
+
     #[napi]
     pub async fn add_typesafe_guardrail(
         &self,

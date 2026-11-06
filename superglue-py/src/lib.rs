@@ -1273,6 +1273,129 @@ impl PyClient {
         Ok(obj.unbind().into_any())
     }
 
+    /// Run a judge config and return the mapped verdict.
+    ///
+    /// Args:
+    ///   config: Judge config object. See ``JudgeConfig``.
+    ///   state: Plain text or a JSON-serializable object.
+    ///   items: Optional list of ``{id, options?, levels?}`` for a repeat template.
+    #[pyo3(signature = (config, state, items=None))]
+    fn judge(
+        &self,
+        py: Python<'_>,
+        config: Bound<'_, PyAny>,
+        state: Bound<'_, PyAny>,
+        items: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let json_mod = py.import("json")?;
+        let config_json: String = json_mod.call_method1("dumps", (config,))?.extract()?;
+        let config = superglue::judge::JudgeConfig::from_json(&config_json)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let state_json: String = json_mod.call_method1("dumps", (state,))?.extract()?;
+        let state_value: Value = serde_json::from_str(&state_json)
+            .map_err(|_| PyValueError::new_err("judge state is invalid"))?;
+        let state: superglue::systemone::State = serde_json::from_value(state_value)
+            .map_err(|_| PyValueError::new_err("judge state is invalid"))?;
+        let items = match items {
+            Some(items) => {
+                let items_json: String = json_mod.call_method1("dumps", (items,))?.extract()?;
+                serde_json::from_str::<Vec<superglue::judge::JudgeItem>>(&items_json)
+                    .map_err(|_| PyValueError::new_err("judge items are invalid"))?
+            }
+            None => Vec::new(),
+        };
+        let creds = superglue::chat::credentials_for(&self.options);
+        let verdict = runtime()
+            .block_on(superglue::judge::run(
+                &self.http,
+                &creds,
+                &config,
+                superglue::judge::JudgeInput { state, items },
+                superglue::judge::JudgeOverrides::default(),
+            ))
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let encoded =
+            serde_json::to_string(&verdict).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
+        Ok(obj.unbind().into_any())
+    }
+
+    /// Complete one turn and return a JSON object that matches `schema`.
+    ///
+    /// Args:
+    ///   user_message: The user's message.
+    ///   schema: ``{name, schema, description?, strict?}`` JSON object.
+    /// A bad schema fails before any provider call. A bad object retries once.
+    #[pyo3(signature = (user_message, schema, timeout_secs=None, connect_timeout_secs=None, request_id=None, reasoning_effort=None))]
+    fn complete_object(
+        &self,
+        py: Python<'_>,
+        user_message: String,
+        schema: Bound<'_, PyAny>,
+        timeout_secs: Option<u64>,
+        connect_timeout_secs: Option<u64>,
+        request_id: Option<String>,
+        reasoning_effort: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let json_mod = py.import("json")?;
+        let schema_json: String = json_mod.call_method1("dumps", (schema,))?.extract()?;
+        let format: superglue::openai::JsonSchemaFormat = serde_json::from_str(&schema_json)
+            .map_err(|_| PyValueError::new_err("object schema is invalid"))?;
+        let http = effective_http(&self.http, timeout_secs, connect_timeout_secs)?;
+        let registry = Arc::clone(&self.registry);
+        let hooks = Arc::clone(&self.hooks);
+        let guardrails = Arc::clone(&self.guardrails);
+        let options = finalize_call_options(
+            &self.options,
+            &self.status_emitter,
+            request_id,
+            reasoning_effort,
+        );
+
+        #[cfg(not(Py_GIL_DISABLED))]
+        let value = {
+            // SAFETY: SaveThread/RestoreThread are called symmetrically. Tool
+            // callbacks re-acquire the GIL inside spawn_blocking.
+            unsafe {
+                let tstate = pyo3::ffi::PyEval_SaveThread();
+                let result = runtime()
+                    .block_on(superglue::structured::complete_object(
+                        &http,
+                        &registry,
+                        &hooks,
+                        &guardrails,
+                        &user_message,
+                        &format,
+                        &options,
+                    ))
+                    .map(|object| object.value)
+                    .map_err(|e| e.to_string());
+                pyo3::ffi::PyEval_RestoreThread(tstate);
+                result
+            }
+            .map_err(PyRuntimeError::new_err)?
+        };
+
+        #[cfg(Py_GIL_DISABLED)]
+        let value = runtime()
+            .block_on(superglue::structured::complete_object(
+                &http,
+                &registry,
+                &hooks,
+                &guardrails,
+                &user_message,
+                &format,
+                &options,
+            ))
+            .map(|object| object.value)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        let encoded =
+            serde_json::to_string(&value).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
+        Ok(obj.unbind().into_any())
+    }
+
     /// Register a TypeSafe System One guardrail. Fail-closed on upstream errors.
     ///
     /// Args:

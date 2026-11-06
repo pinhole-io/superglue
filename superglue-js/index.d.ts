@@ -54,6 +54,10 @@ export declare class Client {
    */
   voiceConnect(config: Record<string, unknown>, onEvent: ((err: Error | null, arg: VoiceEventJs) => void)): Promise<VoiceSession>
   systemOne(state: unknown, questions: Record<string, unknown>, model?: string | undefined | null): Promise<any>
+  /** Run a judge config and return the mapped verdict. */
+  judge(config: Record<string, unknown>, state: unknown, items?: Array<Record<string, unknown>> | undefined | null): Promise<any>
+  /** Complete one turn and return a JSON object that matches `schema` (`{ name, schema }`). A bad object retries once. */
+  completeObject(userMessage: string, schema: Record<string, unknown>, timeoutSecs?: number | undefined | null, connectTimeoutSecs?: number | undefined | null, requestId?: string | undefined | null, reasoningEffort?: string | undefined | null): Promise<any>
   addTypesafeGuardrail(policy: Record<string, unknown>, stage?: string | undefined | null, name?: string | undefined | null): Promise<void>
   runAgent(spec: AgentSpecJs, userMessage: string, timeoutSecs?: number | undefined | null, connectTimeoutSecs?: number | undefined | null, requestId?: string | undefined | null): Promise<CompletionOutcomeJs>
   complete(userMessage: string, timeoutSecs?: number | undefined | null, connectTimeoutSecs?: number | undefined | null, requestId?: string | undefined | null, reasoningEffort?: string | undefined | null): Promise<CompletionOutcomeJs>

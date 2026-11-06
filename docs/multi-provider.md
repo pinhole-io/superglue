@@ -83,6 +83,20 @@ Do not send `typesafe:...` to `/v1/chat/completions` or `/v1/responses`.
 
 Rust example: `cargo run --example 37_systemone`.
 
+## Judge
+
+A judge config names the questions and the values the application receives.
+Build one in Rust with `JudgeBuilder`, or load JSON with `JudgeConfig::from_json`.
+Call `Client::judge` with a `JudgeConfig` and a `JudgeInput`.
+The runner calls System One, then maps each answer.
+`on_error` is `error` or `empty`.
+`empty` returns an empty verdict after a timeout or an upstream error.
+Text state is clipped when `state_chars` is set. JSON state is sent as given.
+
+Rust example: `cargo run --example 40_judge`.
+
+`Client::complete_object` returns one JSON object that matches a schema. A bad object retries once.
+
 ## Per-key rate limits
 
 Pass `requests_per_second_for` (Python) or `requestsPerSecondFor` (JavaScript and Kotlin).

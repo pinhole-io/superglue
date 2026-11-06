@@ -615,6 +615,49 @@ impl Client {
         result
     }
 
+    /// Complete one turn and return a JSON object that matches `schema`.
+    ///
+    /// A bad schema returns before any provider call. A bad object retries once.
+    pub async fn complete_object(
+        &self,
+        user_message: impl Into<String>,
+        schema: crate::openai::JsonSchemaFormat,
+        call: CallOptions,
+    ) -> Result<crate::structured::ObjectOutcome, ChatError> {
+        let user_message = user_message.into();
+        let http = effective_http(&self.inner.http, call.timeout, call.connect_timeout)?;
+        let mut options = finalize_call_options(&self.inner.options, &call);
+        attach_transition_log(&self.inner, &mut options);
+        self.ensure_audit_ready().await;
+        let started_at_ms = now_ms();
+        let result = crate::structured::complete_object(
+            &http,
+            &self.inner.registry,
+            &self.inner.hooks,
+            &self.inner.guardrails,
+            &user_message,
+            &schema,
+            &options,
+        )
+        .await;
+        match &result {
+            Ok(object) => {
+                record_chat_audit(
+                    &self.inner,
+                    &Ok(object.outcome.clone()),
+                    &options,
+                    started_at_ms,
+                )
+                .await;
+            }
+            Err(err) => {
+                record_audit_failure(&self.inner, &options, crate::chat::chat_error_class(err))
+                    .await;
+            }
+        }
+        result
+    }
+
     /// Stream a completion; `on_delta` receives each content token.
     pub async fn stream<F>(
         &self,
@@ -884,6 +927,23 @@ impl Client {
     ) -> Result<crate::systemone::SystemOneResponse, crate::systemone::SystemOneError> {
         let credentials = crate::chat::credentials_for(&self.inner.options);
         crate::systemone::system_one(&self.inner.http, &credentials, request).await
+    }
+
+    /// Run `config` against `input` and return the mapped verdict.
+    pub async fn judge(
+        &self,
+        config: &crate::judge::JudgeConfig,
+        input: crate::judge::JudgeInput,
+    ) -> Result<crate::judge::Verdict, crate::judge::JudgeError> {
+        let credentials = crate::chat::credentials_for(&self.inner.options);
+        crate::judge::run(
+            &self.inner.http,
+            &credentials,
+            config,
+            input,
+            crate::judge::JudgeOverrides::default(),
+        )
+        .await
     }
 
     /// Generate one vector with an embedding model.
