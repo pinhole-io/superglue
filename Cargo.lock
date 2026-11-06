@@ -4585,7 +4585,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "superglue"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "assert_cmd",
  "async-trait",
@@ -4648,7 +4648,7 @@ dependencies = [
 
 [[package]]
 name = "superglue_js"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "async-trait",
  "napi",
@@ -4662,7 +4662,7 @@ dependencies = [
 
 [[package]]
 name = "superglue_kt"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "async-trait",
  "jni 0.21.1",
@@ -4676,7 +4676,7 @@ dependencies = [
 
 [[package]]
 name = "superglue_py"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "async-trait",
  "prost",
