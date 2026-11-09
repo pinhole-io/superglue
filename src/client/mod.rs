@@ -22,7 +22,7 @@ use crate::chat::{
 use crate::context::SummarizeContextConfig;
 use crate::events::{StatusEmitter, StatusSubscriber};
 use crate::fallback::{FallbackPolicy, ModelFallbackChain};
-use crate::graph::{Graph, GraphError};
+use crate::graph::{Graph, GraphError, GraphRun};
 use crate::guardrails::{
     BlocklistAction, BlocklistGuardrail, GuardrailConfig, GuardrailHandler, GuardrailRegistry,
     GuardrailStage, LengthStrategy, MaxLengthGuardrail, PiiRedactGuardrail,
@@ -955,6 +955,19 @@ impl Client {
     /// The run checks [`ChatOptions::cancel`] between waves. An in-flight node
     /// finishes with that call. A cancelled token stops the next wave.
     pub async fn run_graph(&self, graph: &Graph, input: Value) -> Result<Value, GraphError> {
+        graph.execute(self, input).await.map(GraphRun::into_value)
+    }
+
+    /// Run `graph` and return the output plus a Mermaid flowchart of the run.
+    ///
+    /// The flowchart names each node and whether it ran.
+    /// A solid arrow was followed. A dotted arrow was not.
+    /// Route labels are the spec check, not the value the node wrote.
+    pub async fn run_graph_traced(
+        &self,
+        graph: &Graph,
+        input: Value,
+    ) -> Result<GraphRun, GraphError> {
         graph.execute(self, input).await
     }
 

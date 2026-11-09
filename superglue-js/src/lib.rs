@@ -1035,6 +1035,39 @@ impl Client {
             .map_err(|err| Error::from_reason(err.to_string()))
     }
 
+    /// Run a graph and return `{ value, mermaid }`.
+    ///
+    /// `mermaid` is a flowchart of this run. A solid arrow was followed.
+    /// A dotted arrow was not. The text does not include prompts or written values.
+    #[napi]
+    pub async fn run_graph_traced(
+        &self,
+        #[napi(ts_arg_type = "Record<string, unknown>")] spec: Value,
+        #[napi(ts_arg_type = "Record<string, unknown>")] input: Value,
+    ) -> Result<Value> {
+        let encoded = serde_json::to_string(&spec)
+            .map_err(|_| Error::from_reason("graph spec is invalid"))?;
+        let spec = superglue::graph::GraphSpec::from_json(&encoded)
+            .map_err(|err| Error::from_reason(err.to_string()))?;
+        let graph = superglue::graph::Graph::from_spec(spec)
+            .map_err(|err| Error::from_reason(err.to_string()))?;
+        let client = superglue::Client::from_parts(
+            self.inner.options.clone(),
+            Arc::clone(&self.inner.registry),
+            Arc::clone(&self.inner.hooks),
+            Arc::clone(&self.inner.guardrails),
+            Arc::clone(&self.inner.http),
+        );
+        let run = client
+            .run_graph_traced(&graph, input)
+            .await
+            .map_err(|err| Error::from_reason(err.to_string()))?;
+        Ok(json!({
+            "value": run.value(),
+            "mermaid": run.mermaid(),
+        }))
+    }
+
     /// Transcribe audio bytes. The key comes from the provider environment variable.
     ///
     /// `filename` is a plain file name. A path is rejected.

@@ -783,6 +783,81 @@ pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientRun
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientRunGraphTraced(
+    mut env: JNIEnv,
+    _cl: JClass,
+    handle: jlong,
+    spec_json: JString,
+    input_json: JString,
+) -> jstring {
+    let state = match get_client(handle as u64) {
+        Ok(state) => state,
+        Err(err) => {
+            jthrow(&mut env, &err);
+            return std::ptr::null_mut();
+        }
+    };
+    let spec_raw = jstring_to_rust(&mut env, &spec_json).unwrap_or_default();
+    let input_raw = jstring_to_rust(&mut env, &input_json).unwrap_or_else(|_| "{}".to_string());
+    let spec = match superglue::graph::GraphSpec::from_json(&spec_raw) {
+        Ok(spec) => spec,
+        Err(err) => {
+            jthrow(&mut env, &err.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let graph = match superglue::graph::Graph::from_spec(spec) {
+        Ok(graph) => graph,
+        Err(err) => {
+            jthrow(&mut env, &err.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let input: Value = match serde_json::from_str(&input_raw) {
+        Ok(value) => value,
+        Err(_) => {
+            jthrow(&mut env, "graph input is invalid");
+            return std::ptr::null_mut();
+        }
+    };
+    let token = superglue::cancel::CancellationToken::new();
+    let mut options = state.options.clone();
+    options.cancel = Some(token.clone());
+    let client = superglue::Client::from_parts(
+        options,
+        Arc::clone(&state.registry),
+        Arc::clone(&state.hooks),
+        Arc::clone(&state.guardrails),
+        Arc::clone(&state.http),
+    );
+    let mut cancel_rx = state.cancel_tx.subscribe();
+    let generation = *cancel_rx.borrow();
+    let run = runtime().block_on(async {
+        let token = token.clone();
+        let watcher = tokio::spawn(async move {
+            wait_for_cancel(&mut cancel_rx, generation).await;
+            token.cancel();
+        });
+        let result = client.run_graph_traced(&graph, input).await;
+        watcher.abort();
+        result
+    });
+    let run = match run {
+        Ok(run) => run,
+        Err(err) => {
+            jthrow(&mut env, &err.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let encoded = json!({
+        "value": run.value(),
+        "mermaid": run.mermaid(),
+    })
+    .to_string();
+    jstr_from_str(&mut env, &encoded)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientTranscribe(
     mut env: JNIEnv,
     _cl: JClass,

@@ -132,6 +132,21 @@ impl Route {
         matches!(self, Self::Pred { .. })
     }
 
+    /// Spec check for a diagram label. This is not the value the node wrote.
+    pub(crate) fn diagram_label(&self) -> String {
+        match self {
+            Self::Equals { path, expected, .. } => {
+                let shown = clip_label(&expected.to_string());
+                if path.is_empty() {
+                    shown
+                } else {
+                    format!("{path} = {shown}")
+                }
+            }
+            Self::Pred { .. } => "when".to_string(),
+        }
+    }
+
     /// `written` is this node's step result. `state` is the object after the wave's writes.
     pub(crate) fn matches(&self, written: &Value, state: &Value) -> Result<bool, GraphError> {
         match self {
@@ -145,6 +160,18 @@ impl Route {
 }
 
 impl Step {
+    pub(crate) fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Agent { .. } => "agent",
+            Self::Complete { .. } => "complete",
+            Self::Judge { .. } => "judge",
+            Self::Embed { .. } => "embed",
+            Self::Tool { .. } => "tool",
+            Self::Map { .. } => "map",
+            Self::Call { .. } => "call",
+        }
+    }
+
     pub(crate) fn is_call(&self) -> bool {
         matches!(self, Self::Call { .. })
     }
@@ -211,6 +238,16 @@ impl Step {
             Self::Map { template } => Ok(Value::String(render_template(template, state)?)),
             Self::Call { runner } => runner.call(client, state).await,
         }
+    }
+}
+
+fn clip_label(text: &str) -> String {
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(80).collect();
+    if chars.next().is_some() {
+        format!("{head}...")
+    } else {
+        head
     }
 }
 

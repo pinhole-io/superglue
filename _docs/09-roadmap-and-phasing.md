@@ -93,7 +93,7 @@ No phase work is open.
 
 Shipped.
 
-- `Graph` builder and `Client::run_graph`
+- `Graph` builder, `Client::run_graph`, and `Client::run_graph_traced` for a Mermaid flowchart of the run
 - JSON [`GraphSpec`](../src/graph/spec.rs) on the Python, Node, and Kotlin clients
 - Ready nodes in one wave run together
 - A durable workflow engine stays out of scope. A crash does not resume the graph.

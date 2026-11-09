@@ -3,6 +3,8 @@
 //! A graph connects superglue calls with JSON state. Build one with
 //! [`Graph::builder`], or load a [`GraphSpec`] and run it with
 //! [`Client::run_graph`](crate::Client::run_graph).
+//! [`Client::run_graph_traced`](crate::Client::run_graph_traced) also returns
+//! a Mermaid flowchart of that run.
 //!
 //! This is not a durable workflow. A crash does not resume the graph.
 //! Each agent and complete node still uses that call's audit path.
@@ -14,11 +16,13 @@ mod run;
 mod spec;
 mod state;
 mod step;
+mod trace;
 
 pub use builder::GraphBuilder;
 pub use error::GraphError;
 pub use spec::GraphSpec;
 pub use step::GraphCall;
+pub use trace::GraphRun;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;

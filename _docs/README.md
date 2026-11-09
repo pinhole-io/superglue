@@ -48,7 +48,7 @@ Provider routing is in [`../docs/multi-provider.md`](../docs/multi-provider.md).
 | LLM gateway (`gateway` feature) | Shipped |
 | Gateway traffic capture (`capture` feature) | Shipped |
 | Python, Node.js, and Kotlin bindings | Shipped |
-| Graph builder and `Client::run_graph` | Shipped |
+| Graph builder, `Client::run_graph`, and a Mermaid flowchart from `Client::run_graph_traced` | Shipped |
 | General workflow engine (branches, timers, triggers) | Out of scope. The graph builder composes calls. It does not resume a graph. |
 | Traffic shaping from [note 07](07-network-privacy-and-telemetry-shaping.md) | Not a product requirement |
 

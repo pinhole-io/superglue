@@ -606,6 +606,14 @@ public class SuperglueClient
                 ?: throw SuperglueException("runGraph failed")
 
         /**
+         * Run a graph and return `{"value","mermaid"}`.
+         * The flowchart does not include prompts or written values.
+         */
+        public fun runGraphTraced(specJson: String, inputJson: String): String =
+            SuperglueNativeJni.clientRunGraphTraced(handle, specJson, inputJson)
+                ?: throw SuperglueException("runGraphTraced failed")
+
+        /**
          * Transcribe audio bytes. `provider` is `xai`, `openai`, or `groq`.
          * The key comes from that provider's environment variable.
          * `filename` is a plain file name.

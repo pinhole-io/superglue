@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use superglue::Client;
 use superglue::cancel::CancellationToken;
 use superglue::chat::ChatOptions;
-use superglue::graph::{Graph, GraphCall, GraphError, GraphSpec};
+use superglue::graph::{Graph, GraphCall, GraphError, GraphRun, GraphSpec};
 use superglue::guardrails::GuardrailRegistry;
 use superglue::hooks::HookRegistry;
 use superglue::http::{ClientConfig, HttpClient};
@@ -93,6 +93,54 @@ async fn when_selects_the_matching_branch() {
     let answer = client().run_graph(&graph, json!({})).await.unwrap();
     assert_eq!(answer, json!("yes"));
     assert_eq!(skipped.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn mermaid_marks_the_taken_branch() {
+    let secret = "x".repeat(200);
+    let graph = Graph::builder("route")
+        .call("grade", |_client, _state| Ok(json!({"pass": true})))
+        .call("yes", |_client, _state| Ok(json!("yes")))
+        .map("hold", "SECRET-PROMPT")
+        .when("grade", "pass", json!(true), "yes")
+        .when("grade", "note", json!(secret), "hold")
+        .output("yes")
+        .build()
+        .unwrap();
+
+    let run: GraphRun = client().run_graph_traced(&graph, json!({})).await.unwrap();
+    assert_eq!(run.value(), &json!("yes"));
+    let diagram = run.mermaid();
+    assert!(diagram.starts_with("flowchart TD\n"));
+    assert!(diagram.contains("grade · call · ran"));
+    assert!(diagram.contains("yes · call · ran"));
+    assert!(diagram.contains("hold · map · skipped"));
+    assert!(diagram.contains("n0 -->|\"pass = true\"| n1"));
+    assert!(diagram.contains("n0 -.->|\"note = "));
+    assert!(diagram.contains("..."));
+    assert!(!diagram.contains(&"x".repeat(100)));
+    assert!(!diagram.contains("SECRET-PROMPT"));
+    assert!(diagram.contains("class n0,n1 ran"));
+    assert!(diagram.contains("class n2 skipped"));
+}
+
+#[tokio::test]
+async fn mermaid_draws_a_followed_dependency() {
+    let graph = Graph::builder("join")
+        .call("a", |_client, _state| Ok(json!("A")))
+        .call("join", |_client, state| {
+            Ok(Value::String(state["a"].as_str().unwrap_or("").to_string()))
+        })
+        .depends("join", ["a"])
+        .output("join")
+        .build()
+        .unwrap();
+    let run = client().run_graph_traced(&graph, json!({})).await.unwrap();
+    let diagram = run.mermaid();
+    assert!(diagram.contains("n0 --> n1"));
+    assert!(!diagram.contains("-.->"));
+    assert!(diagram.contains("a · call · ran"));
+    assert!(diagram.contains("join · call · ran"));
 }
 
 #[tokio::test]

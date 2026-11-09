@@ -82,6 +82,12 @@ public final class SuperglueNativeJni {
         String inputJson
     );
 
+    public static native String clientRunGraphTraced(
+        long handle,
+        String specJson,
+        String inputJson
+    );
+
     public static native String clientTranscribe(
         long handle,
         String filename,

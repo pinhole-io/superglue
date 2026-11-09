@@ -698,6 +698,32 @@ struct PyUploadedFile {
     purpose: String,
 }
 
+fn graph_client(client: &PyClient) -> superglue::Client {
+    superglue::Client::from_parts(
+        client.options.clone(),
+        Arc::clone(&client.registry),
+        Arc::clone(&client.hooks),
+        Arc::clone(&client.guardrails),
+        Arc::clone(&client.http),
+    )
+}
+
+fn graph_from_py(
+    py: Python<'_>,
+    spec: &Bound<'_, PyAny>,
+    input: &Bound<'_, PyAny>,
+) -> PyResult<(Graph, Value)> {
+    let json_mod = py.import("json")?;
+    let spec_json: String = json_mod.call_method1("dumps", (spec,))?.extract()?;
+    let input_json: String = json_mod.call_method1("dumps", (input,))?.extract()?;
+    let spec =
+        GraphSpec::from_json(&spec_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let graph = Graph::from_spec(spec).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let input = serde_json::from_str(&input_json)
+        .map_err(|_| PyValueError::new_err("graph input is invalid"))?;
+    Ok((graph, input))
+}
+
 #[pymethods]
 impl PyClient {
     #[new]
@@ -1336,24 +1362,38 @@ impl PyClient {
         input: Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let json_mod = py.import("json")?;
-        let spec_json: String = json_mod.call_method1("dumps", (spec,))?.extract()?;
-        let input_json: String = json_mod.call_method1("dumps", (input,))?.extract()?;
-        let spec = GraphSpec::from_json(&spec_json)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
-        let graph = Graph::from_spec(spec).map_err(|err| PyValueError::new_err(err.to_string()))?;
-        let input: Value = serde_json::from_str(&input_json)
-            .map_err(|_| PyValueError::new_err("graph input is invalid"))?;
-        let client = superglue::Client::from_parts(
-            self.options.clone(),
-            Arc::clone(&self.registry),
-            Arc::clone(&self.hooks),
-            Arc::clone(&self.guardrails),
-            Arc::clone(&self.http),
-        );
+        let (graph, input) = graph_from_py(py, &spec, &input)?;
+        let client = graph_client(self);
         let value = runtime()
             .block_on(client.run_graph(&graph, input))
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         let encoded = serde_json::to_string(&value)
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
+        Ok(obj.unbind().into_any())
+    }
+
+    /// Run a graph and return ``{"value", "mermaid"}``.
+    ///
+    /// ``mermaid`` is a flowchart of this run. A solid arrow was followed.
+    /// A dotted arrow was not. The text does not include prompts or written values.
+    fn run_graph_traced(
+        &self,
+        py: Python<'_>,
+        spec: Bound<'_, PyAny>,
+        input: Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let json_mod = py.import("json")?;
+        let (graph, input) = graph_from_py(py, &spec, &input)?;
+        let client = graph_client(self);
+        let run = runtime()
+            .block_on(client.run_graph_traced(&graph, input))
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let payload = serde_json::json!({
+            "value": run.value(),
+            "mermaid": run.mermaid(),
+        });
+        let encoded = serde_json::to_string(&payload)
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
         Ok(obj.unbind().into_any())

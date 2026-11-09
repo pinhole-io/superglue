@@ -8,6 +8,7 @@ use tokio::task::JoinSet;
 use crate::client::Client;
 
 use super::state::lookup;
+use super::trace::{self, GraphRun};
 use super::{Graph, GraphError};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -22,7 +23,11 @@ struct RunState {
 }
 
 impl Graph {
-    pub(crate) async fn execute(&self, client: &Client, input: Value) -> Result<Value, GraphError> {
+    pub(crate) async fn execute(
+        &self,
+        client: &Client,
+        input: Value,
+    ) -> Result<GraphRun, GraphError> {
         let Value::Object(mut state) = input else {
             return Err(GraphError::InputType);
         };
@@ -36,6 +41,7 @@ impl Graph {
             status: vec![Status::Pending; self.nodes.len()],
             runs: vec![0; self.nodes.len()],
         };
+        let mut taken = HashSet::new();
         for (place, node) in self.nodes.iter().enumerate() {
             if node.depends.is_empty() && !self.incoming.contains(&node.id) {
                 run.status[place] = Status::Active;
@@ -55,10 +61,12 @@ impl Graph {
             let patches = run_wave(client, self, &ready, snapshot).await?;
             apply_patches(&mut state, &patches)?;
             let merged = Value::Object(state.clone());
-            select_routes(self, &ready, &patches, &merged, &mut run)?;
+            select_routes(self, &ready, &patches, &merged, &mut run, &mut taken)?;
         }
 
-        read_output(self, &run, &Value::Object(state))
+        let value = read_output(self, &run, &Value::Object(state))?;
+        let mermaid = trace::render(self, &run.runs, &taken);
+        Ok(GraphRun::new(value, mermaid))
     }
 }
 
@@ -153,6 +161,7 @@ fn select_routes(
     patches: &[(usize, String, Value)],
     state: &Value,
     run: &mut RunState,
+    taken: &mut HashSet<(usize, usize)>,
 ) -> Result<(), GraphError> {
     let written: HashMap<usize, &Value> = patches
         .iter()
@@ -165,16 +174,22 @@ fn select_routes(
         let Some(value) = written.get(place) else {
             continue;
         };
-        let mut selected: Option<&str> = None;
-        for route in &node.routes {
+        let mut selected: Option<usize> = None;
+        for (slot, route) in node.routes.iter().enumerate() {
             if route.matches(value, state)? {
-                selected = Some(route.target());
+                selected = Some(slot);
                 break;
             }
         }
-        let target = selected
-            .map(str::to_string)
-            .or_else(|| node.otherwise.clone());
+        let target = if let Some(slot) = selected {
+            taken.insert((*place, slot));
+            Some(node.routes[slot].target().to_string())
+        } else if node.otherwise.is_some() {
+            taken.insert((*place, node.routes.len()));
+            node.otherwise.clone()
+        } else {
+            None
+        };
         if let Some(target) = target
             && let Some(target_place) = graph.index.get(&target)
         {

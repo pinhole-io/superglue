@@ -58,6 +58,8 @@ export declare class Client {
   judge(config: Record<string, unknown>, state: unknown, items?: Array<Record<string, unknown>> | undefined | null): Promise<any>
   /** Run a graph spec and return the JSON value at the output path. */
   runGraph(spec: Record<string, unknown>, input: Record<string, unknown>): Promise<any>
+  /** Run a graph and return `{ value, mermaid }`. The flowchart does not include prompts or written values. */
+  runGraphTraced(spec: Record<string, unknown>, input: Record<string, unknown>): Promise<any>
   /** Transcribe audio bytes. `provider` is `xai`, `openai`, or `groq`. The key comes from that provider's environment variable. */
   transcribe(filename: string, audio: Buffer, provider?: string | undefined | null): Promise<any>
   /** Complete one turn and return a JSON object that matches `schema` (`{ name, schema }`). A bad object retries once. */
