@@ -23,6 +23,7 @@ node examples/01_simple_completion.mjs
 `40_judge.mjs` and `42_judge_advanced.mjs` need `TYPESAFE_API_KEY`. They exit 0 when that key is unset.
 `41_structured_output.mjs` needs `OPENAI_API_KEY`. It exits 0 when that key is unset.
 `43_graph.mjs` needs `OPENAI_API_KEY`. It drafts, then polishes. `TYPESAFE_API_KEY` adds a judge.
+`44_multi_judge.mjs` needs `OPENAI_API_KEY` and `TYPESAFE_API_KEY`. Three judges score one draft. It exits 0 when either key is unset.
 
 ## Example 21
 

@@ -61,9 +61,11 @@ From `superglue-android/`, that path is the directory that contains this reposit
 | 41 | Structured output | `example41_structured_output` |
 | 42 | Advanced judge | `example42_judge_advanced` |
 | 43 | Graph builder | `example43_graph` |
+| 44 | Multi-judge graph | `example44_multi_judge` |
 | demo | Short demo | `example_demo` |
 
 `example37_systemone`, `example40_judge`, and `example42_judge_advanced` need `TYPESAFE_API_KEY`.
+`example44_multi_judge` needs `OPENAI_API_KEY` and `TYPESAFE_API_KEY`.
 `example38_file_transcription` needs `XAI_API_KEY` by default.
 `example28_mcp_tools` runs only when `MCP_RUN=1`.
 

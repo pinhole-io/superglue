@@ -10,7 +10,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * JUnit counterparts for examples 38 and 40–42.
+ * JUnit counterparts for examples 38 and 40–44.
  * Example 38 needs the provider key named in the test.
  * Examples 40 and 42 need `TYPESAFE_API_KEY`.
  * Example 41 needs `OPENAI_API_KEY`.
@@ -202,6 +202,31 @@ class ParityExamplesTest {
         }
     }
 
+    @Test
+    fun example44_multi_judge() {
+        val openai = exampleApiKey()
+        val typesafe = System.getenv("TYPESAFE_API_KEY").orEmpty()
+        if (openai.isEmpty() || typesafe.isEmpty()) {
+            println("Set OPENAI_API_KEY and TYPESAFE_API_KEY to run example 44.")
+            return
+        }
+        val ticket =
+            "Hi, I've been trying to connect my Stripe account for 3 days and it keeps failing. " +
+                "I'm losing sales. Please help ASAP."
+        val baseUrl = baseUrlFor(openai, System.getenv("OPENAI_BASE_URL"))
+        openExampleClient {
+            it.copy(baseUrl = baseUrl, apiKeys = mapOf("typesafe" to typesafe))
+        }.use { client ->
+            println("Three judges score one draft. Safety chooses hold or reply.")
+            println("Ticket: $ticket")
+            println("Running the graph...")
+            val ticketJson = Json.encodeToString(String.serializer(), ticket)
+            val answer = client.runGraph(deskSpec(exampleModel()), """{"ticket":$ticketJson}""")
+            println("Answer: $answer")
+            assertTrue(answer.isNotBlank() && answer != "null")
+        }
+    }
+
     private fun typesafeClient(key: String): SuperglueClient =
         SuperglueClient.open(
             ClientConfig(
@@ -209,6 +234,127 @@ class ParityExamplesTest {
                 apiKeys = mapOf("typesafe" to key),
             ),
         )
+
+    private fun deskSpec(model: String): String {
+        val encoded = Json.encodeToString(String.serializer(), model)
+        val writer =
+            """
+            {
+              "name": "desk",
+              "persona": "a careful support agent",
+              "goals": [],
+              "instructions": [],
+              "constraints": [],
+              "model": $encoded,
+              "max_tool_rounds": 16,
+              "max_output_retries": 3,
+              "system_prompt_override": null,
+              "reasoning_effort": null
+            }
+            """.trimIndent()
+        return """
+            {
+              "name": "desk",
+              "require": ["ticket"],
+              "output": "answer",
+              "nodes": [
+                {
+                  "id": "draft",
+                  "step": {
+                    "kind": "agent",
+                    "spec": $writer,
+                    "prompt": "Write a support reply to this ticket. Use at most 4 sentences. Do not invent a refund or a delivery date.\n{ticket}"
+                  }
+                },
+                {
+                  "id": "safety",
+                  "depends": ["draft"],
+                  "step": {
+                    "kind": "judge",
+                    "input": "draft",
+                    "config": {
+                      "id": "desk.safety",
+                      "questions": {
+                        "safe": {
+                          "type": "noul",
+                          "instructions": "The reply does not invent a refund, an account balance, or a delivery date"
+                        }
+                      },
+                      "outputs": [{"kind": "noul", "name": "pass", "from": "safe", "threshold": 0.5}]
+                    }
+                  },
+                  "when": [{"path": "pass", "equals": true, "target": "reply"}],
+                  "otherwise": "hold"
+                },
+                {
+                  "id": "tone",
+                  "depends": ["draft"],
+                  "step": {
+                    "kind": "judge",
+                    "input": "draft",
+                    "config": {
+                      "id": "desk.tone",
+                      "questions": {
+                        "tone": {
+                          "type": "choice",
+                          "instructions": "Which tone does this reply use?",
+                          "options": {
+                            "calm": "Polite and specific",
+                            "terse": "Short but not rude",
+                            "rude": "Blames the customer or sounds angry"
+                          }
+                        }
+                      },
+                      "outputs": [{
+                        "kind": "choice",
+                        "name": "label",
+                        "from": "tone",
+                        "map": {"calm": "calm", "terse": "terse", "rude": "rude"},
+                        "emit_confidence": true
+                      }]
+                    }
+                  }
+                },
+                {
+                  "id": "coverage",
+                  "depends": ["draft"],
+                  "step": {
+                    "kind": "judge",
+                    "input": "draft",
+                    "config": {
+                      "id": "desk.coverage",
+                      "questions": {
+                        "answers": {
+                          "type": "noul",
+                          "instructions": "The reply addresses the customer's request"
+                        }
+                      },
+                      "outputs": [{"kind": "noul", "name": "pass", "from": "answers", "threshold": 0.5}]
+                    }
+                  }
+                },
+                {
+                  "id": "hold",
+                  "write": "answer",
+                  "step": {
+                    "kind": "map",
+                    "template": "We need a moment to check this ticket. A person will follow up."
+                  }
+                },
+                {
+                  "id": "reply",
+                  "write": "answer",
+                  "depends": ["tone", "coverage"],
+                  "step": {
+                    "kind": "agent",
+                    "spec": $writer,
+                    "prompt": "Ticket:\n{ticket}\n\nDraft:\n{draft}\n\nSafety:\n{safety}\n\nTone:\n{tone}\n\nCoverage:\n{coverage}\n\nWrite the reply the customer should receive. Use at most 4 sentences. If the tone label is rude, rewrite the draft in a calm tone. If coverage.pass is false, add the missing answer. Do not invent a refund or a delivery date."
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+    }
 
     private fun audioFile(): File {
         val override = System.getenv("SUPERGLUE_AUDIO_FILE").orEmpty()

@@ -269,6 +269,79 @@ fn spec_round_trip_and_unknown_kind() {
 }
 
 #[test]
+fn multi_judge_panel_builds() {
+    use superglue::agents::AgentSpec;
+    use superglue::judge::JudgeBuilder;
+
+    let writer = AgentSpec::new("desk", "a careful support agent");
+    let safety = JudgeBuilder::new("desk.safety")
+        .noul("safe", "The reply invents nothing")
+        .done()
+        .noul_output("pass", "safe")
+        .threshold(0.5)
+        .done()
+        .build()
+        .unwrap();
+    let tone = JudgeBuilder::new("desk.tone")
+        .choice("tone", "Which tone does this reply use?")
+        .option("calm", "Polite")
+        .option("terse", "Short")
+        .option("rude", "Blames the customer")
+        .done()
+        .choice_output("label", "tone")
+        .map_text("calm", "calm")
+        .map_text("terse", "terse")
+        .map_text("rude", "rude")
+        .emit_confidence()
+        .done()
+        .build()
+        .unwrap();
+    let coverage = JudgeBuilder::new("desk.coverage")
+        .noul("answers", "The reply addresses the request")
+        .done()
+        .noul_output("pass", "answers")
+        .threshold(0.5)
+        .done()
+        .build()
+        .unwrap();
+    let graph = Graph::builder("desk")
+        .require("ticket")
+        .agent("draft", writer.clone(), "Reply to {ticket}")
+        .judge("safety", safety, "draft")
+        .judge("tone", tone, "draft")
+        .judge("coverage", coverage, "draft")
+        .map("hold", "We need a moment to check this ticket.")
+        .agent("reply", writer, "Use {draft} {safety} {tone} {coverage}")
+        .depends("safety", ["draft"])
+        .depends("tone", ["draft"])
+        .depends("coverage", ["draft"])
+        .depends("reply", ["tone", "coverage"])
+        .when("safety", "pass", json!(true), "reply")
+        .otherwise("safety", "hold")
+        .write("hold", "answer")
+        .write("reply", "answer")
+        .output("answer")
+        .build()
+        .unwrap();
+    let spec = graph.to_spec().unwrap();
+    let safety_node = spec.nodes.iter().find(|node| node.id == "safety").unwrap();
+    assert_eq!(safety_node.when[0].target, "reply");
+    assert_eq!(safety_node.otherwise.as_deref(), Some("hold"));
+    let reply = spec.nodes.iter().find(|node| node.id == "reply").unwrap();
+    assert_eq!(
+        reply.depends,
+        vec!["tone".to_string(), "coverage".to_string()]
+    );
+    assert_eq!(reply.write.as_deref(), Some("answer"));
+    assert!(
+        spec.nodes
+            .iter()
+            .any(|node| node.id == "tone" && node.depends == vec!["draft".to_string()])
+    );
+    Graph::from_spec(spec).unwrap();
+}
+
+#[test]
 fn closure_graph_is_not_serializable() {
     let graph = Graph::builder("host")
         .call("a", |_client, _state| Ok(json!("a")))

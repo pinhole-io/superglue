@@ -1382,11 +1382,7 @@ impl PyClient {
         let creds = superglue::providers::ProviderCredentials::from_env();
         let encoded = runtime()
             .block_on(superglue::audio::transcribe_json(
-                &self.http,
-                &creds,
-                provider,
-                &filename,
-                bytes,
+                &self.http, &creds, provider, &filename, bytes,
             ))
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         let json_mod = py.import("json")?;
