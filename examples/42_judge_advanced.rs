@@ -17,6 +17,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let config = JudgeBuilder::new("example.triage")
+        .model("typesafe:jev-latest")
+        .timeout_ms(400)
         .on_error(OnError::Error)
         .state_chars(240)
         .choice("department", "Which team should handle this ticket?")

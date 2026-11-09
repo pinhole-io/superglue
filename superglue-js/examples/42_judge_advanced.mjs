@@ -21,6 +21,8 @@ const client = createClient({
 const verdict = await client.judge(
   {
     id: "example.triage",
+    model: "typesafe:jev-latest",
+    timeout_ms: 400,
     state_chars: 240,
     on_error: "error",
     questions: {
@@ -53,10 +55,19 @@ const verdict = await client.judge(
         name: "team",
         from: "department",
         map: { billing: "Billing", sales: "Sales", technical: "Support" },
+        min_confidence: 0,
+        on_unknown: "error",
+        required: false,
         emit_confidence: true,
       },
-      { kind: "noul", name: "urgent", from: "is_urgent", threshold: 0.5 },
-      { kind: "score", name: "frustration", from: "frustration" },
+      {
+        kind: "noul",
+        name: "urgent",
+        from: "is_urgent",
+        threshold: 0.5,
+        required: false,
+      },
+      { kind: "score", name: "frustration", from: "frustration", required: false },
     ],
     repeat: {
       id_prefix: "issue:",

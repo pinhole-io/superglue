@@ -8,7 +8,7 @@ mod support;
 use serde_json::json;
 use superglue::agents::AgentSpec;
 use superglue::graph::Graph;
-use superglue::judge::JudgeBuilder;
+use superglue::judge::{JudgeBuilder, OnError};
 use superglue::providers::ProviderId;
 use support::{base_url, model, require_api_key};
 
@@ -39,12 +39,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Polish this draft. Keep it under 4 sentences.\n{draft}",
             )
             .depends("polish", ["draft"])
+            .visits("draft", 1)
+            .visits("polish", 1)
             .output("polish")
             .build()?
     } else {
         println!("The graph drafts, judges, then polishes or keeps the draft.");
         client = client.api_key_for(ProviderId::TypeSafe, typesafe);
         let judge = JudgeBuilder::new("review.pass")
+            .model("typesafe:jev-latest")
+            .timeout_ms(400)
+            .on_error(OnError::Error)
             .noul("good", "The draft answers the question in clear prose")
             .done()
             .noul_output("pass", "good")
@@ -70,6 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .otherwise("grade", "keep")
             .write("polish", "answer")
             .write("keep", "answer")
+            .visits("draft", 1)
+            .visits("grade", 1)
+            .visits("polish", 1)
+            .visits("keep", 1)
             .output("answer")
             .build()?
     };

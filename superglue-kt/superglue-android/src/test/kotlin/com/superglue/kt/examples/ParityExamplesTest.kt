@@ -51,6 +51,9 @@ class ParityExamplesTest {
             """
             {
               "id": "example.urgency",
+              "model": "typesafe:jev-latest",
+              "timeout_ms": 400,
+              "on_error": "error",
               "questions": {
                 "is_urgent": {
                   "type": "noul",
@@ -61,7 +64,8 @@ class ParityExamplesTest {
                 "kind": "noul",
                 "name": "urgent",
                 "from": "is_urgent",
-                "threshold": 0.5
+                "threshold": 0.5,
+                "required": false
               }]
             }
             """.trimIndent()
@@ -124,6 +128,8 @@ class ParityExamplesTest {
             """
             {
               "id": "example.triage",
+              "model": "typesafe:jev-latest",
+              "timeout_ms": 400,
               "state_chars": 240,
               "on_error": "error",
               "questions": {
@@ -156,10 +162,13 @@ class ParityExamplesTest {
                   "name": "team",
                   "from": "department",
                   "map": {"billing": "Billing", "sales": "Sales", "technical": "Support"},
+                  "min_confidence": 0,
+                  "on_unknown": "error",
+                  "required": false,
                   "emit_confidence": true
                 },
-                {"kind": "noul", "name": "urgent", "from": "is_urgent", "threshold": 0.5},
-                {"kind": "score", "name": "frustration", "from": "frustration"}
+                {"kind": "noul", "name": "urgent", "from": "is_urgent", "threshold": 0.5, "required": false},
+                {"kind": "score", "name": "frustration", "from": "frustration", "required": false}
               ],
               "repeat": {
                 "id_prefix": "issue:",
@@ -260,6 +269,7 @@ class ParityExamplesTest {
               "nodes": [
                 {
                   "id": "draft",
+                  "visits": 1,
                   "step": {
                     "kind": "agent",
                     "spec": $writer,
@@ -268,19 +278,29 @@ class ParityExamplesTest {
                 },
                 {
                   "id": "safety",
+                  "visits": 1,
                   "depends": ["draft"],
                   "step": {
                     "kind": "judge",
                     "input": "draft",
                     "config": {
                       "id": "desk.safety",
+                      "model": "typesafe:jev-latest",
+                      "timeout_ms": 400,
+                      "on_error": "error",
                       "questions": {
                         "safe": {
                           "type": "noul",
                           "instructions": "The reply does not invent a refund, an account balance, or a delivery date"
                         }
                       },
-                      "outputs": [{"kind": "noul", "name": "pass", "from": "safe", "threshold": 0.5}]
+                      "outputs": [{
+                        "kind": "noul",
+                        "name": "pass",
+                        "from": "safe",
+                        "threshold": 0.5,
+                        "required": false
+                      }]
                     }
                   },
                   "when": [{"path": "pass", "equals": true, "target": "reply"}],
@@ -288,12 +308,16 @@ class ParityExamplesTest {
                 },
                 {
                   "id": "tone",
+                  "visits": 1,
                   "depends": ["draft"],
                   "step": {
                     "kind": "judge",
                     "input": "draft",
                     "config": {
                       "id": "desk.tone",
+                      "model": "typesafe:jev-latest",
+                      "timeout_ms": 400,
+                      "on_error": "error",
                       "questions": {
                         "tone": {
                           "type": "choice",
@@ -310,6 +334,9 @@ class ParityExamplesTest {
                         "name": "label",
                         "from": "tone",
                         "map": {"calm": "calm", "terse": "terse", "rude": "rude"},
+                        "min_confidence": 0,
+                        "on_unknown": "error",
+                        "required": false,
                         "emit_confidence": true
                       }]
                     }
@@ -317,25 +344,36 @@ class ParityExamplesTest {
                 },
                 {
                   "id": "coverage",
+                  "visits": 1,
                   "depends": ["draft"],
                   "step": {
                     "kind": "judge",
                     "input": "draft",
                     "config": {
                       "id": "desk.coverage",
+                      "model": "typesafe:jev-latest",
+                      "timeout_ms": 400,
+                      "on_error": "error",
                       "questions": {
                         "answers": {
                           "type": "noul",
                           "instructions": "The reply addresses the customer's request"
                         }
                       },
-                      "outputs": [{"kind": "noul", "name": "pass", "from": "answers", "threshold": 0.5}]
+                      "outputs": [{
+                        "kind": "noul",
+                        "name": "pass",
+                        "from": "answers",
+                        "threshold": 0.5,
+                        "required": false
+                      }]
                     }
                   }
                 },
                 {
                   "id": "hold",
                   "write": "answer",
+                  "visits": 1,
                   "step": {
                     "kind": "map",
                     "template": "We need a moment to check this ticket. A person will follow up."
@@ -344,6 +382,7 @@ class ParityExamplesTest {
                 {
                   "id": "reply",
                   "write": "answer",
+                  "visits": 1,
                   "depends": ["tone", "coverage"],
                   "step": {
                     "kind": "agent",

@@ -14,6 +14,8 @@ if not key:
 
 config = {
     "id": "example.triage",
+    "model": "typesafe:jev-latest",
+    "timeout_ms": 400,
     "state_chars": 240,
     "on_error": "error",
     "questions": {
@@ -50,6 +52,9 @@ config = {
                 "sales": "Sales",
                 "technical": "Support",
             },
+            "min_confidence": 0,
+            "on_unknown": "error",
+            "required": False,
             "emit_confidence": True,
         },
         {
@@ -57,11 +62,13 @@ config = {
             "name": "urgent",
             "from": "is_urgent",
             "threshold": 0.5,
+            "required": False,
         },
         {
             "kind": "score",
             "name": "frustration",
             "from": "frustration",
+            "required": False,
         },
     ],
     "repeat": {

@@ -53,6 +53,7 @@ spec = {
     "nodes": [
         {
             "id": "draft",
+            "visits": 1,
             "step": {
                 "kind": "agent",
                 "spec": writer(),
@@ -64,12 +65,16 @@ spec = {
         },
         {
             "id": "safety",
+            "visits": 1,
             "depends": ["draft"],
             "step": {
                 "kind": "judge",
                 "input": "draft",
                 "config": {
                     "id": "desk.safety",
+                    "model": "typesafe:jev-latest",
+                    "timeout_ms": 400,
+                    "on_error": "error",
                     "questions": {
                         "safe": {
                             "type": "noul",
@@ -80,7 +85,13 @@ spec = {
                         }
                     },
                     "outputs": [
-                        {"kind": "noul", "name": "pass", "from": "safe", "threshold": 0.5}
+                        {
+                            "kind": "noul",
+                            "name": "pass",
+                            "from": "safe",
+                            "threshold": 0.5,
+                            "required": False,
+                        }
                     ],
                 },
             },
@@ -89,12 +100,16 @@ spec = {
         },
         {
             "id": "tone",
+            "visits": 1,
             "depends": ["draft"],
             "step": {
                 "kind": "judge",
                 "input": "draft",
                 "config": {
                     "id": "desk.tone",
+                    "model": "typesafe:jev-latest",
+                    "timeout_ms": 400,
+                    "on_error": "error",
                     "questions": {
                         "tone": {
                             "type": "choice",
@@ -112,6 +127,9 @@ spec = {
                             "name": "label",
                             "from": "tone",
                             "map": {"calm": "calm", "terse": "terse", "rude": "rude"},
+                            "min_confidence": 0,
+                            "on_unknown": "error",
+                            "required": False,
                             "emit_confidence": True,
                         }
                     ],
@@ -120,12 +138,16 @@ spec = {
         },
         {
             "id": "coverage",
+            "visits": 1,
             "depends": ["draft"],
             "step": {
                 "kind": "judge",
                 "input": "draft",
                 "config": {
                     "id": "desk.coverage",
+                    "model": "typesafe:jev-latest",
+                    "timeout_ms": 400,
+                    "on_error": "error",
                     "questions": {
                         "answers": {
                             "type": "noul",
@@ -138,6 +160,7 @@ spec = {
                             "name": "pass",
                             "from": "answers",
                             "threshold": 0.5,
+                            "required": False,
                         }
                     ],
                 },
@@ -146,6 +169,7 @@ spec = {
         {
             "id": "hold",
             "write": "answer",
+            "visits": 1,
             "step": {
                 "kind": "map",
                 "template": "We need a moment to check this ticket. A person will follow up.",
@@ -154,6 +178,7 @@ spec = {
         {
             "id": "reply",
             "write": "answer",
+            "visits": 1,
             "depends": ["tone", "coverage"],
             "step": {
                 "kind": "agent",

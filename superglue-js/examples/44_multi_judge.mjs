@@ -50,6 +50,7 @@ const spec = {
   nodes: [
     {
       id: "draft",
+      visits: 1,
       step: {
         kind: "agent",
         spec: writer(),
@@ -59,12 +60,16 @@ const spec = {
     },
     {
       id: "safety",
+      visits: 1,
       depends: ["draft"],
       step: {
         kind: "judge",
         input: "draft",
         config: {
           id: "desk.safety",
+          model: "typesafe:jev-latest",
+          timeout_ms: 400,
+          on_error: "error",
           questions: {
             safe: {
               type: "noul",
@@ -72,7 +77,15 @@ const spec = {
                 "The reply does not invent a refund, an account balance, or a delivery date",
             },
           },
-          outputs: [{ kind: "noul", name: "pass", from: "safe", threshold: 0.5 }],
+          outputs: [
+            {
+              kind: "noul",
+              name: "pass",
+              from: "safe",
+              threshold: 0.5,
+              required: false,
+            },
+          ],
         },
       },
       when: [{ path: "pass", equals: true, target: "reply" }],
@@ -80,12 +93,16 @@ const spec = {
     },
     {
       id: "tone",
+      visits: 1,
       depends: ["draft"],
       step: {
         kind: "judge",
         input: "draft",
         config: {
           id: "desk.tone",
+          model: "typesafe:jev-latest",
+          timeout_ms: 400,
+          on_error: "error",
           questions: {
             tone: {
               type: "choice",
@@ -103,6 +120,9 @@ const spec = {
               name: "label",
               from: "tone",
               map: { calm: "calm", terse: "terse", rude: "rude" },
+              min_confidence: 0,
+              on_unknown: "error",
+              required: false,
               emit_confidence: true,
             },
           ],
@@ -111,25 +131,38 @@ const spec = {
     },
     {
       id: "coverage",
+      visits: 1,
       depends: ["draft"],
       step: {
         kind: "judge",
         input: "draft",
         config: {
           id: "desk.coverage",
+          model: "typesafe:jev-latest",
+          timeout_ms: 400,
+          on_error: "error",
           questions: {
             answers: {
               type: "noul",
               instructions: "The reply addresses the customer's request",
             },
           },
-          outputs: [{ kind: "noul", name: "pass", from: "answers", threshold: 0.5 }],
+          outputs: [
+            {
+              kind: "noul",
+              name: "pass",
+              from: "answers",
+              threshold: 0.5,
+              required: false,
+            },
+          ],
         },
       },
     },
     {
       id: "hold",
       write: "answer",
+      visits: 1,
       step: {
         kind: "map",
         template: "We need a moment to check this ticket. A person will follow up.",
@@ -138,6 +171,7 @@ const spec = {
     {
       id: "reply",
       write: "answer",
+      visits: 1,
       depends: ["tone", "coverage"],
       step: {
         kind: "agent",

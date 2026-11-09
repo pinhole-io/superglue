@@ -10,7 +10,7 @@ mod support;
 use serde_json::json;
 use superglue::agents::AgentSpec;
 use superglue::graph::Graph;
-use superglue::judge::JudgeBuilder;
+use superglue::judge::{JudgeBuilder, OnError};
 use superglue::providers::ProviderId;
 use support::{base_url, model};
 
@@ -28,6 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_name = model();
     let writer = AgentSpec::new("desk", "a careful support agent").with_model(model_name.clone());
     let safety = JudgeBuilder::new("desk.safety")
+        .model("typesafe:jev-latest")
+        .timeout_ms(400)
+        .on_error(OnError::Error)
         .noul(
             "safe",
             "The reply does not invent a refund, an account balance, or a delivery date",
@@ -38,6 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .done()
         .build()?;
     let tone = JudgeBuilder::new("desk.tone")
+        .model("typesafe:jev-latest")
+        .timeout_ms(400)
+        .on_error(OnError::Error)
         .choice("tone", "Which tone does this reply use?")
         .option("calm", "Polite and specific")
         .option("terse", "Short but not rude")
@@ -51,6 +57,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .done()
         .build()?;
     let coverage = JudgeBuilder::new("desk.coverage")
+        .model("typesafe:jev-latest")
+        .timeout_ms(400)
+        .on_error(OnError::Error)
         .noul("answers", "The reply addresses the customer's request")
         .done()
         .noul_output("pass", "answers")
@@ -85,6 +94,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .otherwise("safety", "hold")
         .write("hold", "answer")
         .write("reply", "answer")
+        .visits("draft", 1)
+        .visits("safety", 1)
+        .visits("tone", 1)
+        .visits("coverage", 1)
+        .visits("hold", 1)
+        .visits("reply", 1)
         .output("answer")
         .build()?;
 

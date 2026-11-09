@@ -14,6 +14,9 @@ if not key:
 
 config = {
     "id": "example.urgency",
+    "model": "typesafe:jev-latest",
+    "timeout_ms": 400,
+    "on_error": "error",
     "questions": {
         "is_urgent": {
             "type": "noul",
@@ -26,6 +29,7 @@ config = {
             "name": "urgent",
             "from": "is_urgent",
             "threshold": 0.5,
+            "required": False,
         }
     ],
 }

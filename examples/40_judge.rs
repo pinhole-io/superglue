@@ -3,20 +3,17 @@
 //! The same judge loads from JSON and builds in Rust. Both forms must match.
 
 use superglue::client::ClientBuilder;
-use superglue::judge::{JudgeBuilder, JudgeConfig, JudgeInput};
+use superglue::judge::{JudgeBuilder, JudgeConfig, JudgeInput, OnError};
 use superglue::providers::ProviderId;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let key = std::env::var("TYPESAFE_API_KEY").unwrap_or_default();
-    if key.is_empty() {
-        eprintln!("Set TYPESAFE_API_KEY to run this example.");
-        return Ok(());
-    }
-
     let config = JudgeConfig::from_json(
         r#"{
             "id": "example.urgency",
+            "model": "typesafe:jev-latest",
+            "timeout_ms": 400,
+            "on_error": "error",
             "questions": {
                 "is_urgent": {
                     "type": "noul",
@@ -27,12 +24,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "kind": "noul",
                 "name": "urgent",
                 "from": "is_urgent",
-                "threshold": 0.5
+                "threshold": 0.5,
+                "required": false
             }]
         }"#,
     )?;
 
     let built = JudgeBuilder::new("example.urgency")
+        .model("typesafe:jev-latest")
+        .timeout_ms(400)
+        .on_error(OnError::Error)
         .noul(
             "is_urgent",
             "The message conveys urgency or time-sensitivity",
@@ -43,6 +44,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .done()
         .build()?;
     assert_eq!(built, config);
+
+    let key = std::env::var("TYPESAFE_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        eprintln!("Set TYPESAFE_API_KEY to run this example.");
+        return Ok(());
+    }
 
     let client = ClientBuilder::new()
         .api_key("unused")
