@@ -1035,6 +1035,32 @@ impl Client {
             .map_err(|err| Error::from_reason(err.to_string()))
     }
 
+    /// Transcribe audio bytes. The key comes from the provider environment variable.
+    ///
+    /// `filename` is a plain file name. A path is rejected.
+    /// `provider` is `xai` (default), `openai`, or `groq`.
+    /// The result is `{provider, model, text, words}`.
+    #[napi]
+    pub async fn transcribe(
+        &self,
+        filename: String,
+        audio: Buffer,
+        provider: Option<String>,
+    ) -> Result<Value> {
+        let provider = provider.unwrap_or_else(|| "xai".to_string());
+        let creds = superglue::providers::ProviderCredentials::from_env();
+        let encoded = superglue::audio::transcribe_json(
+            &self.inner.http,
+            &creds,
+            &provider,
+            &filename,
+            audio.to_vec(),
+        )
+        .await
+        .map_err(|err| Error::from_reason(err.to_string()))?;
+        serde_json::from_str(&encoded).map_err(|err| Error::from_reason(err.to_string()))
+    }
+
     /// Complete one turn and return a JSON object that matches `schema`.
     ///
     /// `schema` is `{ name, schema, description?, strict? }`.

@@ -82,6 +82,13 @@ public final class SuperglueNativeJni {
         String inputJson
     );
 
+    public static native String clientTranscribe(
+        long handle,
+        String filename,
+        byte[] audio,
+        String provider
+    );
+
     public static native String clientCompleteObject(
         long handle,
         String userMessage,

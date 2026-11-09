@@ -62,11 +62,11 @@ Set `OPENAI_BASE_URL` yourself when you want a specific host. See `08_custom_bas
 | 35 | Code tool mode | yes | yes | yes | `example35_code_tool_mode` |
 | 36 | Realtime voice | yes | yes | yes | `example36_realtime_voice` |
 | 37 | TypeSafe System One | yes | yes | yes | `example37_systemone` |
-| 38 | File transcription | yes | | | |
+| 38 | File transcription | yes | yes | yes | `example38_file_transcription` |
 | 39 | JSONL run store and resume | yes | | | |
-| 40 | Judge config | yes | | | |
-| 41 | Structured output | yes | | | |
-| 42 | Advanced judge, builder | yes | | | |
+| 40 | Judge config | yes | yes | yes | `example40_judge` |
+| 41 | Structured output | yes | yes | yes | `example41_structured_output` |
+| 42 | Advanced judge, builder | yes | yes | yes | `example42_judge_advanced` |
 | 43 | Graph builder | yes | yes | yes | `example43_graph` |
 | demo | Short demo | yes | yes | yes | `example_demo` |
 
@@ -80,11 +80,11 @@ Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
 | `35_code_tool_mode` | `--features code` |
 | `36_realtime_voice` | `--features realtime`. Needs `XAI_API_KEY`, or `SUPERGLUE_VOICE_PROVIDER=openai` with `OPENAI_API_KEY`. Skips when that key is unset. `OPENAI_REALTIME_MODEL` overrides `gpt-realtime`. Python, JavaScript, and Kotlin use OpenAI and run one scripted turn with a tool call. |
 | `37_systemone` | `TYPESAFE_API_KEY` |
-| `38_file_transcription` | Needs `XAI_API_KEY` by default. Skips when that key is unset. Uses `examples/sample.mp3` unless you pass another path. Set `SUPERGLUE_STT_PROVIDER` to `openai` or `groq` for those keys. |
+| `38_file_transcription` | Needs `XAI_API_KEY` by default. Skips when that key is unset. Uses `examples/sample.mp3` unless you pass another path. Set `SUPERGLUE_STT_PROVIDER` to `openai` or `groq` for those keys. Python, JavaScript, and Kotlin call `transcribe`. |
 | `39_jsonl_resume` | `OPENAI_API_KEY`. Writes to a temporary directory. The example crashes a child run, then resumes it. |
-| `40_judge` | `TYPESAFE_API_KEY` |
-| `41_structured_output` | `OPENAI_API_KEY` |
-| `42_judge_advanced` | `TYPESAFE_API_KEY` |
+| `40_judge` | `TYPESAFE_API_KEY`. Python, JavaScript, and Kotlin load the same judge config. |
+| `41_structured_output` | `OPENAI_API_KEY`. Python, JavaScript, and Kotlin call `complete_object`. |
+| `42_judge_advanced` | `TYPESAFE_API_KEY`. Python, JavaScript, and Kotlin send the same triage config. |
 | `43_graph` | `OPENAI_API_KEY`. Drafts, then polishes. `TYPESAFE_API_KEY` adds a judge before the polish step. Python, JavaScript, and Kotlin send the same spec. |
 
 ## Rust `Client`
@@ -103,5 +103,4 @@ The Python script is [`../superglue-py/examples/21_executors.py`](../superglue-p
 Python, JavaScript, and Kotlin have no API for these rows.
 
 - **33** drives Wiremock through `benches/support`.
-- **38** calls `audio::transcribe`.
 - **39** uses `JsonlRunStore`. The bindings do not expose an audit store.

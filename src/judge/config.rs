@@ -391,4 +391,117 @@ mod tests {
             JudgeError::Config("output source is missing")
         ));
     }
+
+    #[test]
+    fn triage_json_matches_the_builder() {
+        use crate::judge::{JudgeBuilder, OnError};
+
+        let built = JudgeBuilder::new("example.triage")
+            .on_error(OnError::Error)
+            .state_chars(240)
+            .choice("department", "Which team should handle this ticket?")
+            .option("billing", "Payment or subscription issues")
+            .option("technical", "Bugs or integration problems")
+            .option("sales", "Pricing or account questions")
+            .done()
+            .noul(
+                "is_urgent",
+                "The message conveys urgency or time-sensitivity",
+            )
+            .done()
+            .score("frustration", "How frustrated the customer appears")
+            .level("Calm, just stating facts")
+            .level("Frustrated but civil")
+            .level("Very angry, strong language")
+            .done()
+            .choice_output("team", "department")
+            .map_text("billing", "Billing")
+            .map_text("technical", "Support")
+            .map_text("sales", "Sales")
+            .emit_confidence()
+            .done()
+            .noul_output("urgent", "is_urgent")
+            .threshold(0.5)
+            .done()
+            .score_output("frustration", "frustration")
+            .done()
+            .repeat_noul(
+                "matches",
+                "Does this ticket match the known issue in the item?",
+            )
+            .id_prefix("issue:")
+            .threshold(0.5)
+            .done()
+            .build()
+            .expect("triage judge");
+        let loaded = JudgeConfig::from_json(super::TRIAGE_JSON).expect("triage json");
+        assert_eq!(built, loaded);
+    }
 }
+
+#[cfg(test)]
+const TRIAGE_JSON: &str = r#"{
+  "id": "example.triage",
+  "state_chars": 240,
+  "on_error": "error",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this ticket?",
+      "options": {
+        "billing": "Payment or subscription issues",
+        "sales": "Pricing or account questions",
+        "technical": "Bugs or integration problems"
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated the customer appears",
+      "levels": [
+        "Calm, just stating facts",
+        "Frustrated but civil",
+        "Very angry, strong language"
+      ]
+    },
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "The message conveys urgency or time-sensitivity"
+    }
+  },
+  "outputs": [
+    {
+      "kind": "choice",
+      "name": "team",
+      "from": "department",
+      "map": {
+        "billing": "Billing",
+        "sales": "Sales",
+        "technical": "Support"
+      },
+      "emit_confidence": true
+    },
+    {
+      "kind": "noul",
+      "name": "urgent",
+      "from": "is_urgent",
+      "threshold": 0.5
+    },
+    {
+      "kind": "score",
+      "name": "frustration",
+      "from": "frustration"
+    }
+  ],
+  "repeat": {
+    "id_prefix": "issue:",
+    "template": {
+      "type": "noul",
+      "instructions": "Does this ticket match the known issue in the item?"
+    },
+    "output": {
+      "kind": "noul",
+      "name": "matches",
+      "threshold": 0.5
+    }
+  }
+}"#;

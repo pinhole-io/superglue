@@ -1359,6 +1359,41 @@ impl PyClient {
         Ok(obj.unbind().into_any())
     }
 
+    /// Transcribe audio bytes. The key comes from the provider environment variable.
+    ///
+    /// Args:
+    ///   filename: Plain file name. A path is rejected.
+    ///   audio: Audio bytes.
+    ///   provider: ``xai`` (default), ``openai``, or ``groq``.
+    ///
+    /// Returns:
+    ///   ``{provider, model, text, words}``.
+    #[pyo3(signature = (filename, audio, provider="xai"))]
+    fn transcribe(
+        &self,
+        py: Python<'_>,
+        filename: String,
+        audio: Bound<'_, PyAny>,
+        provider: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let bytes: Vec<u8> = audio
+            .extract()
+            .map_err(|_| PyValueError::new_err("audio bytes are invalid"))?;
+        let creds = superglue::providers::ProviderCredentials::from_env();
+        let encoded = runtime()
+            .block_on(superglue::audio::transcribe_json(
+                &self.http,
+                &creds,
+                provider,
+                &filename,
+                bytes,
+            ))
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let json_mod = py.import("json")?;
+        let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
+        Ok(obj.unbind().into_any())
+    }
+
     /// Complete one turn and return a JSON object that matches `schema`.
     ///
     /// Args:

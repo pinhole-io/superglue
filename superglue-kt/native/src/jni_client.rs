@@ -783,6 +783,48 @@ pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientRun
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientTranscribe(
+    mut env: JNIEnv,
+    _cl: JClass,
+    handle: jlong,
+    filename: JString,
+    audio: jni::objects::JByteArray,
+    provider: JString,
+) -> jstring {
+    let state = match get_client(handle as u64) {
+        Ok(state) => state,
+        Err(err) => {
+            jthrow(&mut env, &err);
+            return std::ptr::null_mut();
+        }
+    };
+    let filename = jstring_to_rust(&mut env, &filename).unwrap_or_default();
+    let provider = jstring_to_rust(&mut env, &provider).unwrap_or_else(|_| "xai".to_string());
+    let bytes = match env.convert_byte_array(&audio) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            jthrow(&mut env, &err.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let creds = superglue::providers::ProviderCredentials::from_env();
+    let encoded = match runtime().block_on(superglue::audio::transcribe_json(
+        &state.http,
+        &creds,
+        &provider,
+        &filename,
+        bytes,
+    )) {
+        Ok(encoded) => encoded,
+        Err(err) => {
+            jthrow(&mut env, &err.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    jstr_from_str(&mut env, &encoded)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientCompleteObject(
     mut env: JNIEnv,
     _cl: JClass,

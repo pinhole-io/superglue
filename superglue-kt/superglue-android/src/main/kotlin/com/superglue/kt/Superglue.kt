@@ -605,6 +605,19 @@ public class SuperglueClient
             SuperglueNativeJni.clientRunGraph(handle, specJson, inputJson)
                 ?: throw SuperglueException("runGraph failed")
 
+        /**
+         * Transcribe audio bytes. `provider` is `xai`, `openai`, or `groq`.
+         * The key comes from that provider's environment variable.
+         * `filename` is a plain file name.
+         */
+        public fun transcribe(
+            filename: String,
+            audio: ByteArray,
+            provider: String = "xai",
+        ): String =
+            SuperglueNativeJni.clientTranscribe(handle, filename, audio, provider)
+                ?: throw SuperglueException("transcribe failed")
+
         /** Complete one turn and return a JSON object that matches `schemaJson` (`{name, schema}`). A bad object retries once. */
         public fun completeObject(
             userMessage: String,

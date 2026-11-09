@@ -3,6 +3,8 @@
 //! OpenAI and Groq use `/v1/audio/transcriptions`.
 //! xAI uses `/v1/stt`.
 
+use std::str::FromStr;
+
 use secrecy::ExposeSecret;
 use serde::Deserialize;
 use thiserror::Error;
@@ -37,6 +39,10 @@ pub enum TranscribeError {
     Credentials(#[from] crate::providers::CredentialsError),
     #[error("unsupported provider for file transcription: {0}")]
     UnsupportedProvider(ProviderId),
+    #[error("file transcription provider is unsupported")]
+    UnsupportedProviderName,
+    #[error("audio filename is invalid")]
+    BadFilename,
     #[error("audio too large: {bytes} bytes (max {max})")]
     FileTooLarge { bytes: usize, max: usize },
     #[error(transparent)]
@@ -103,6 +109,64 @@ pub fn default_transcription_model(provider: ProviderId) -> Option<&'static str>
         ProviderId::Xai => Some("grok-voice-transcribe-2.0"),
         _ => None,
     }
+}
+
+/// Reject a filename that is empty, too long, or contains a path or a control character.
+///
+/// The transcription call sends this name as a multipart field.
+pub fn check_audio_filename(filename: &str) -> Result<(), TranscribeError> {
+    if filename.is_empty()
+        || filename.len() > 255
+        || filename.contains(['/', '\\'])
+        || filename.chars().any(char::is_control)
+    {
+        return Err(TranscribeError::BadFilename);
+    }
+    Ok(())
+}
+
+/// Resolve a transcription provider name. An unknown name does not echo the input.
+pub fn transcription_provider_from_name(name: &str) -> Result<ProviderId, TranscribeError> {
+    let provider =
+        ProviderId::from_str(name).map_err(|_| TranscribeError::UnsupportedProviderName)?;
+    if supports_transcription(provider) {
+        Ok(provider)
+    } else {
+        Err(TranscribeError::UnsupportedProvider(provider))
+    }
+}
+
+/// Transcribe audio and return JSON for a language binding.
+///
+/// The object is `{provider, model, text, words}`. Do not log `bytes` or `text`.
+pub async fn transcribe_json(
+    http: &HttpClient,
+    credentials: &ProviderCredentials,
+    provider_name: &str,
+    filename: &str,
+    bytes: Vec<u8>,
+) -> Result<String, TranscribeError> {
+    check_audio_filename(filename)?;
+    let provider = transcription_provider_from_name(provider_name)?;
+    let transcript = transcribe(http, credentials, provider, filename, bytes).await?;
+    let words: Vec<serde_json::Value> = transcript
+        .words
+        .iter()
+        .map(|word| {
+            serde_json::json!({
+                "start": word.start,
+                "end": word.end,
+                "text": word.text,
+            })
+        })
+        .collect();
+    let value = serde_json::json!({
+        "provider": provider.as_str(),
+        "model": default_transcription_model(provider).unwrap_or(""),
+        "text": transcript.text,
+        "words": words,
+    });
+    Ok(value.to_string())
 }
 
 /// Transcribe audio bytes with word timestamps when the provider returns them.
@@ -257,7 +321,15 @@ fn word_from_verbose(word: VerboseWord) -> Option<TranscriptWord> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_verbose_transcript, supports_transcription};
+    use super::{check_audio_filename, parse_verbose_transcript, supports_transcription};
+
+    #[test]
+    fn rejects_a_path_filename() {
+        assert!(check_audio_filename("sample.mp3").is_ok());
+        assert!(check_audio_filename("../sample.mp3").is_err());
+        assert!(check_audio_filename("a/b.mp3").is_err());
+        assert!(check_audio_filename("").is_err());
+    }
     use crate::providers::ProviderId;
     use serde_json::json;
 

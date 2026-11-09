@@ -56,15 +56,22 @@ From `superglue-android/`, that path is the directory that contains this reposit
 | 35 | Code tool mode | `example35_code_tool_mode` |
 | 36 | Realtime voice | `example36_realtime_voice` |
 | 37 | TypeSafe System One | `example37_systemone` |
+| 38 | File transcription | `example38_file_transcription` |
+| 40 | Judge config | `example40_judge` |
+| 41 | Structured output | `example41_structured_output` |
+| 42 | Advanced judge | `example42_judge_advanced` |
+| 43 | Graph builder | `example43_graph` |
 | demo | Short demo | `example_demo` |
 
-`example37_systemone` needs `TYPESAFE_API_KEY`.
+`example37_systemone`, `example40_judge`, and `example42_judge_advanced` need `TYPESAFE_API_KEY`.
+`example38_file_transcription` needs `XAI_API_KEY` by default.
 `example28_mcp_tools` runs only when `MCP_RUN=1`.
 
 `example36_realtime_voice` uses OpenAI Realtime. `OPENAI_REALTIME_MODEL` overrides `gpt-realtime`.
 
-There is no JUnit example for 33, 38, or 39.
-Those rows use Rust bench fixtures, `audio::transcribe`, and `JsonlRunStore`.
+There is no JUnit example for 33 or 39.
+Row 33 drives Wiremock through the Rust bench fixtures.
+Row 39 uses `JsonlRunStore`. The binding does not expose an audit store.
 
 ## Client options used by the tests
 
