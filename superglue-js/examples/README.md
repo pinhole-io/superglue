@@ -19,6 +19,7 @@ node examples/01_simple_completion.mjs
 `34_context_optimization_live_benchmark.mjs` compares two context configs on one prompt.
 `35_code_tool_mode.mjs` needs a native build that includes the `code` feature. The binding crate enables that feature.
 `37_systemone.mjs` needs `TYPESAFE_API_KEY`. It exits 0 when that variable is unset.
+`43_graph.mjs` needs `OPENAI_API_KEY`. It drafts, then polishes. `TYPESAFE_API_KEY` adds a judge.
 
 ## Example 21
 

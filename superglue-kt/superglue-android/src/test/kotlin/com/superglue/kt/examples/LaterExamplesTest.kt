@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * JUnit counterparts for examples 17–21, 28, 32, 34–37, and the short demo.
+ * JUnit counterparts for examples 17–21, 28, 32, 34–37, 43, and the short demo.
  * Live sections need `OPENAI_API_KEY`, except where a test names another variable.
  */
 class LaterExamplesTest {
@@ -372,6 +372,37 @@ class LaterExamplesTest {
     }
 
     @Test
+    fun example43_graph() {
+        runLive(43) {
+            val model = exampleModel()
+            val typesafe = System.getenv("TYPESAFE_API_KEY").orEmpty()
+            val spec =
+                if (typesafe.isEmpty()) {
+                    println("TYPESAFE_API_KEY is unset. The graph drafts, then polishes.")
+                    plainGraph(model)
+                } else {
+                    println("The graph drafts, judges, then polishes or keeps the draft.")
+                    judgedGraph(model)
+                }
+            val baseUrl = baseUrlFor(exampleApiKey(), System.getenv("OPENAI_BASE_URL"))
+            openExampleClient {
+                val config = it.copy(baseUrl = baseUrl)
+                if (typesafe.isEmpty()) {
+                    config
+                } else {
+                    config.copy(apiKeys = mapOf("typesafe" to typesafe))
+                }
+            }.use { client ->
+                println("Question: Rust ownership")
+                println("Running the graph...")
+                val answer = client.runGraph(spec, """{"question":"Rust ownership"}""")
+                println("Answer: $answer")
+                assertTrue(answer.isNotBlank() && answer != "null")
+            }
+        }
+    }
+
+    @Test
     fun example_demo() {
         if (exampleApiKey().isEmpty()) {
             println("Set OPENAI_API_KEY to run the demo live.")
@@ -395,4 +426,112 @@ class LaterExamplesTest {
             assertHasContent(result.content)
         }
     }
+
+    private fun writerJson(model: String): String {
+        val encoded = Json.encodeToString(String.serializer(), model)
+        return """
+            {
+              "name": "writer",
+              "persona": "a careful writer",
+              "goals": [],
+              "instructions": [],
+              "constraints": [],
+              "model": $encoded,
+              "max_tool_rounds": 16,
+              "max_output_retries": 3,
+              "system_prompt_override": null,
+              "reasoning_effort": null
+            }
+            """.trimIndent()
+    }
+
+    private fun draftNode(model: String): String =
+        """
+        {
+          "id": "draft",
+          "visits": 1,
+          "step": {
+            "kind": "agent",
+            "spec": ${writerJson(model)},
+            "prompt": "Write a short draft about {question}. Use at most 4 sentences."
+          }
+        }
+        """.trimIndent()
+
+    private fun polishNode(model: String, write: String?): String {
+        val extra = if (write == null) """"depends": ["draft"]""" else """"write": "$write""""
+        return """
+            {
+              "id": "polish",
+              "visits": 1,
+              $extra,
+              "step": {
+                "kind": "agent",
+                "spec": ${writerJson(model)},
+                "prompt": "Polish this draft. Keep it under 4 sentences.\n{draft}"
+              }
+            }
+            """.trimIndent()
+    }
+
+    private fun plainGraph(model: String): String =
+        """
+        {
+          "name": "review",
+          "require": ["question"],
+          "output": "polish",
+          "nodes": [${draftNode(model)}, ${polishNode(model, null)}]
+        }
+        """.trimIndent()
+
+    private fun judgedGraph(model: String): String =
+        """
+        {
+          "name": "review",
+          "require": ["question"],
+          "output": "answer",
+          "nodes": [
+            ${draftNode(model)},
+            {
+              "id": "grade",
+              "visits": 1,
+              "depends": ["draft"],
+              "step": {
+                "kind": "judge",
+                "input": "draft",
+                "config": {
+                  "id": "review.pass",
+                  "model": "typesafe:jev-latest",
+                  "timeout_ms": 400,
+                  "on_error": "error",
+                  "questions": {
+                    "good": {
+                      "type": "noul",
+                      "instructions": "The draft answers the question in clear prose"
+                    }
+                  },
+                  "outputs": [
+                    {
+                      "kind": "noul",
+                      "name": "pass",
+                      "from": "good",
+                      "threshold": 0.5,
+                      "required": false
+                    }
+                  ]
+                }
+              },
+              "when": [{"path": "pass", "equals": true, "target": "polish"}],
+              "otherwise": "keep"
+            },
+            ${polishNode(model, "answer")},
+            {
+              "id": "keep",
+              "write": "answer",
+              "visits": 1,
+              "step": {"kind": "map", "template": "{draft}"}
+            }
+          ]
+        }
+        """.trimIndent()
 }
