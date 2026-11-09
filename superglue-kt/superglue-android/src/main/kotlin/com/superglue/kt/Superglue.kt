@@ -600,6 +600,11 @@ public class SuperglueClient
             SuperglueNativeJni.clientJudge(handle, configJson, stateJson, itemsJson)
                 ?: throw SuperglueException("judge failed")
 
+        /** Run a graph spec and return the JSON value at the output path. */
+        public fun runGraph(specJson: String, inputJson: String): String =
+            SuperglueNativeJni.clientRunGraph(handle, specJson, inputJson)
+                ?: throw SuperglueException("runGraph failed")
+
         /** Complete one turn and return a JSON object that matches `schemaJson` (`{name, schema}`). A bad object retries once. */
         public fun completeObject(
             userMessage: String,

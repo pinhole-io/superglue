@@ -35,7 +35,7 @@ plugins {
 }
 
 group = "com.superglue.kt"
-version = "1.3.0"
+version = "1.4.0"
 
 android {
     namespace = "com.superglue.kt"
@@ -43,7 +43,7 @@ android {
 
     // Kept in sync with projects/Cargo.toml via scripts/sync-superglue-versions.sh
     @Suppress("UNUSED_VARIABLE")
-    val superglueLibraryVersion = "1.3.0"
+    val superglueLibraryVersion = "1.4.0"
 
     defaultConfig {
         minSdk = 24

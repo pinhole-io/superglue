@@ -21,6 +21,7 @@ pub mod embeddings;
 pub mod events;
 pub mod fallback;
 pub mod files;
+pub mod graph;
 pub mod guardrails;
 pub mod hooks;
 pub mod http;

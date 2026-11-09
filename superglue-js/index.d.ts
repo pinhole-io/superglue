@@ -56,6 +56,8 @@ export declare class Client {
   systemOne(state: unknown, questions: Record<string, unknown>, model?: string | undefined | null): Promise<any>
   /** Run a judge config and return the mapped verdict. */
   judge(config: Record<string, unknown>, state: unknown, items?: Array<Record<string, unknown>> | undefined | null): Promise<any>
+  /** Run a graph spec and return the JSON value at the output path. */
+  runGraph(spec: Record<string, unknown>, input: Record<string, unknown>): Promise<any>
   /** Complete one turn and return a JSON object that matches `schema` (`{ name, schema }`). A bad object retries once. */
   completeObject(userMessage: string, schema: Record<string, unknown>, timeoutSecs?: number | undefined | null, connectTimeoutSecs?: number | undefined | null, requestId?: string | undefined | null, reasoningEffort?: string | undefined | null): Promise<any>
   addTypesafeGuardrail(policy: Record<string, unknown>, stage?: string | undefined | null, name?: string | undefined | null): Promise<void>

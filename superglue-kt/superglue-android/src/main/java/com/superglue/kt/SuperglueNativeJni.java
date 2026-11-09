@@ -76,6 +76,12 @@ public final class SuperglueNativeJni {
         String itemsJson
     );
 
+    public static native String clientRunGraph(
+        long handle,
+        String specJson,
+        String inputJson
+    );
+
     public static native String clientCompleteObject(
         long handle,
         String userMessage,

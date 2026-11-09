@@ -36,4 +36,4 @@ A fix lands in Rust and reaches every binding.
 ## Open decisions
 
 - A language can use in-process FFI or the gRPC sidecar. See [Protobuf, gRPC, and workflows](04-protobuf-grpc-and-workflows.md).
-- The workflow engine is still planned. See [Roadmap and phasing](09-roadmap-and-phasing.md).
+- Graph composition is in the crate. A durable workflow engine stays out of scope. See [Roadmap and phasing](09-roadmap-and-phasing.md).

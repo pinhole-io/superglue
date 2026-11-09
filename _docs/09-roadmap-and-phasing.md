@@ -89,6 +89,15 @@ Shipped.
 
 No phase work is open.
 
+## Graph composition
+
+Shipped.
+
+- `Graph` builder and `Client::run_graph`
+- JSON [`GraphSpec`](../src/graph/spec.rs) on the Python, Node, and Kotlin clients
+- Ready nodes in one wave run together
+- A durable workflow engine stays out of scope. A crash does not resume the graph.
+
 Context flags are in [Context optimization](11-context-optimization.md).
 
 ## Cross-cutting work

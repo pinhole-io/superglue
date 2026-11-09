@@ -22,6 +22,7 @@ use crate::chat::{
 use crate::context::SummarizeContextConfig;
 use crate::events::{StatusEmitter, StatusSubscriber};
 use crate::fallback::{FallbackPolicy, ModelFallbackChain};
+use crate::graph::{Graph, GraphError};
 use crate::guardrails::{
     BlocklistAction, BlocklistGuardrail, GuardrailConfig, GuardrailHandler, GuardrailRegistry,
     GuardrailStage, LengthStrategy, MaxLengthGuardrail, PiiRedactGuardrail,
@@ -35,7 +36,8 @@ use crate::responses::{
     stream_complete_with_tools as stream_responses_with_tools,
     stream_response as stream_response_api,
 };
-use crate::tools::{Tool, ToolMode, ToolRegistry};
+use crate::tools::{Tool, ToolInvokeError, ToolMode, ToolRegistry};
+use serde_json::Value;
 
 pub use bootstrap::{
     BindingBootstrap, BindingBootstrapConfig, bootstrap_from_parts, provider_id_from_str,
@@ -435,6 +437,34 @@ impl ClientBuilder {
 }
 
 impl Client {
+    /// Build a client from handles a binding already owns.
+    ///
+    /// The graph runner uses this so a binding can run a spec on its own
+    /// tools, hooks, and guardrails. Audit stays empty. The binding records
+    /// audit on its own complete path.
+    #[must_use]
+    pub fn from_parts(
+        options: ChatOptions,
+        registry: Arc<ToolRegistry>,
+        hooks: Arc<HookRegistry>,
+        guardrails: Arc<GuardrailRegistry>,
+        http: Arc<HttpClient>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(ClientInner {
+                options,
+                registry,
+                hooks,
+                guardrails,
+                http,
+                max_upload_bytes: crate::files::default_max_upload_bytes(),
+                audit: None,
+                #[cfg(feature = "mcp")]
+                mcp_sessions: Mutex::new(Vec::new()),
+            }),
+        }
+    }
+
     #[must_use]
     pub fn builder() -> ClientBuilder {
         ClientBuilder::new()
@@ -918,6 +948,30 @@ impl Client {
         let result = engine.run(&http, &registry, user_message, &opts).await;
         record_chat_audit(&self.inner, &result, &opts, started_at_ms).await;
         result
+    }
+
+    /// Run `graph` with `input`. `input` is a JSON object.
+    ///
+    /// The run checks [`ChatOptions::cancel`] between waves. An in-flight node
+    /// finishes with that call. A cancelled token stops the next wave.
+    pub async fn run_graph(&self, graph: &Graph, input: Value) -> Result<Value, GraphError> {
+        graph.execute(self, input).await
+    }
+
+    pub(crate) fn is_graph_cancelled(&self) -> bool {
+        self.inner
+            .options
+            .cancel
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+    }
+
+    pub(crate) async fn invoke_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, ToolInvokeError> {
+        self.inner.registry.invoke(name, arguments).await
     }
 
     /// Evaluate `request` with TypeSafe System One.

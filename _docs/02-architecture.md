@@ -30,6 +30,7 @@ The gateway is an optional HTTP front door. It uses the same providers.
 | `audio` | File transcription for OpenAI and Groq |
 | `systemone` | TypeSafe System One evaluation |
 | `judge` | Judge config, mapped verdict, and the System One runner |
+| `graph` | Builder, JSON state, and the wave runner |
 | `usage` | Token breakdown helpers |
 | `costing` | Static USD rates and billed-cost lookup |
 | `audit` | `AuditStore`, `MemoryRunStore`, `JsonlRunStore`, `RunRecorder`, resume helpers |

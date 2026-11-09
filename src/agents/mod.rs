@@ -30,6 +30,7 @@
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::chat::{
@@ -55,7 +56,7 @@ use crate::tools::ToolRegistry;
 /// If you want full control over the system prompt text, set
 /// [`AgentSpec::system_prompt_override`] instead — the persona/goals/
 /// instructions/constraints fields are then ignored during compilation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSpec {
     /// Unique identifier for this agent (used in logs and traces).
     pub name: String,

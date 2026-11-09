@@ -5,7 +5,8 @@
 The protobuf schema is shipped.
 The gRPC server is shipped behind the `grpc` feature.
 Audit resume helpers are shipped.
-The workflow engine is planned.
+The graph builder is shipped. See [`src/graph`](../src/graph/mod.rs).
+A durable workflow engine stays out of scope.
 
 JSON stays the format for tool arguments and tool results.
 See [Tool boundary and async](03-tool-boundary-and-async.md).
@@ -105,7 +106,9 @@ A run without `RUN_FINISHED` is a partial run. Pass it to `resume_chat` or `resu
 - It accepts only request ids that match `[A-Za-z0-9_-]+`.
 - A disk error is logged. The completion continues.
 
-This is not a general workflow engine. There are no branches, timers, or external triggers.
+This is not a durable workflow engine. There are no timers and no external triggers.
+A graph run does not resume after a crash.
+Use [`Graph`](../src/graph/mod.rs) to compose agent, complete, judge, embed, tool, and map steps.
 
 ### Warning: a tool can run twice
 

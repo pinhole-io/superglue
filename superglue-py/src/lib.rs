@@ -58,6 +58,7 @@ use superglue::client::{
 use superglue::events::{ProcessEvent, ProcessEventKind, StatusEmitter, StatusSubscriber};
 use superglue::fallback::ModelFallbackChain;
 use superglue::files::{self, FilePurpose};
+use superglue::graph::{Graph, GraphSpec};
 use superglue::guardrails::{
     BlocklistAction, BlocklistGuardrail, GuardrailConfig, GuardrailError, GuardrailHandler,
     GuardrailOutcome, GuardrailRegistry, GuardrailStage, LengthStrategy, MaxLengthGuardrail,
@@ -1316,6 +1317,44 @@ impl PyClient {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let encoded =
             serde_json::to_string(&verdict).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
+        Ok(obj.unbind().into_any())
+    }
+
+    /// Run a graph spec against a JSON object.
+    ///
+    /// Args:
+    ///   spec: Graph spec. See ``GraphSpec`` in the Rust crate.
+    ///   input: JSON object. Required keys come from the spec.
+    ///
+    /// Returns:
+    ///   The JSON value at the spec output path.
+    fn run_graph(
+        &self,
+        py: Python<'_>,
+        spec: Bound<'_, PyAny>,
+        input: Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let json_mod = py.import("json")?;
+        let spec_json: String = json_mod.call_method1("dumps", (spec,))?.extract()?;
+        let input_json: String = json_mod.call_method1("dumps", (input,))?.extract()?;
+        let spec = GraphSpec::from_json(&spec_json)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let graph = Graph::from_spec(spec).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let input: Value = serde_json::from_str(&input_json)
+            .map_err(|_| PyValueError::new_err("graph input is invalid"))?;
+        let client = superglue::Client::from_parts(
+            self.options.clone(),
+            Arc::clone(&self.registry),
+            Arc::clone(&self.hooks),
+            Arc::clone(&self.guardrails),
+            Arc::clone(&self.http),
+        );
+        let value = runtime()
+            .block_on(client.run_graph(&graph, input))
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let encoded = serde_json::to_string(&value)
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
         Ok(obj.unbind().into_any())
     }

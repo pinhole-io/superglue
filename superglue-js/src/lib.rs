@@ -1009,6 +1009,32 @@ impl Client {
         serde_json::to_value(verdict).map_err(|err| Error::from_reason(err.to_string()))
     }
 
+    /// Run a graph spec and return the JSON value at the output path.
+    #[napi]
+    pub async fn run_graph(
+        &self,
+        #[napi(ts_arg_type = "Record<string, unknown>")] spec: Value,
+        #[napi(ts_arg_type = "Record<string, unknown>")] input: Value,
+    ) -> Result<Value> {
+        let encoded = serde_json::to_string(&spec)
+            .map_err(|_| Error::from_reason("graph spec is invalid"))?;
+        let spec = superglue::graph::GraphSpec::from_json(&encoded)
+            .map_err(|err| Error::from_reason(err.to_string()))?;
+        let graph = superglue::graph::Graph::from_spec(spec)
+            .map_err(|err| Error::from_reason(err.to_string()))?;
+        let client = superglue::Client::from_parts(
+            self.inner.options.clone(),
+            Arc::clone(&self.inner.registry),
+            Arc::clone(&self.inner.hooks),
+            Arc::clone(&self.inner.guardrails),
+            Arc::clone(&self.inner.http),
+        );
+        client
+            .run_graph(&graph, input)
+            .await
+            .map_err(|err| Error::from_reason(err.to_string()))
+    }
+
     /// Complete one turn and return a JSON object that matches `schema`.
     ///
     /// `schema` is `{ name, schema, description?, strict? }`.
