@@ -444,6 +444,8 @@ pub struct ChatOptions {
     pub image_store: Option<Arc<tokio::sync::Mutex<crate::images::ImageStore>>>,
     /// Opt-in sink for replayable steps of the unary tool loops. Audit sets it per call.
     pub transition_log: Option<TransitionLog>,
+    /// When the tool-round cap is reached after a tool round, make one call with no tools.
+    pub answer_after_tool_cap: bool,
 }
 
 impl Default for ChatOptions {
@@ -493,6 +495,7 @@ impl Default for ChatOptions {
             context_event_logger: None,
             image_store: None,
             transition_log: None,
+            answer_after_tool_cap: false,
         }
     }
 }
@@ -587,6 +590,7 @@ impl From<proto::ChatOptions> for ChatOptions {
             context_event_logger: None,
             image_store: None,
             transition_log: None,
+            answer_after_tool_cap: false,
         }
     }
 }
@@ -2763,6 +2767,7 @@ where
 
     let mut all_specs = registry.list_specs().await;
     let mut active_set = ActiveToolSet::new(all_specs.clone(), options.tool_mode);
+    let mut closing = false;
     let mut stream_code_allowlist: Option<Arc<HashSet<String>>> = None;
     let route_model = options
         .tool_route_model
@@ -2771,11 +2776,15 @@ where
 
     loop {
         if api_calls >= options.max_tool_rounds {
-            return Err(fail_partial(
-                ChatError::MaxToolRounds(options.max_tool_rounds),
-                &messages,
-                injected_prefix,
-            ));
+            if options.answer_after_tool_cap && !closing && api_calls > 0 {
+                closing = true;
+            } else {
+                return Err(fail_partial(
+                    ChatError::MaxToolRounds(options.max_tool_rounds),
+                    &messages,
+                    injected_prefix,
+                ));
+            }
         }
         api_calls += 1;
 
@@ -2828,8 +2837,16 @@ where
         {
             stream_code_allowlist = None;
         }
-        let tool_specs = active_set.specs_for_llm();
-        let chat_tools = active_set.chat_tools_for_llm();
+        let tool_specs = if closing {
+            None
+        } else {
+            active_set.specs_for_llm()
+        };
+        let chat_tools = if closing {
+            None
+        } else {
+            active_set.chat_tools_for_llm()
+        };
         log_prefix_guard(options, tool_specs, &mut last_prefix_hash);
         let request_messages = messages_with_volatile_suffix(options, &messages);
         notify_llm_payload(options, api_calls, &request_id, &request_messages);
@@ -3246,7 +3263,7 @@ where
             provider_blocks: round.provider_blocks.clone(),
         };
 
-        if !round.tool_calls.is_empty() {
+        if !closing && !round.tool_calls.is_empty() {
             if active_set.has_router() && is_router_call(&round.tool_calls) {
                 let query =
                     router_query_from_calls(&round.tool_calls).unwrap_or_else(|| last_user.clone());
