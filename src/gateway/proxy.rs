@@ -131,16 +131,111 @@ pub async fn preflight_async(
     model: &str,
     request_id: &str,
     estimate_usd: f64,
+    skip_allowlist: bool,
 ) -> GatewayResult<BudgetGuard> {
     let auth = auth.clone();
     let user_id = user_id.to_string();
     let model = model.to_string();
     let request_id_owned = request_id.to_string();
     db.run_blocking(move |db| {
-        preflight(db, &auth, &user_id, &model, &request_id_owned, estimate_usd)
+        preflight(
+            db,
+            &auth,
+            &user_id,
+            &model,
+            &request_id_owned,
+            estimate_usd,
+            skip_allowlist,
+        )
     })
     .await?;
     Ok(BudgetGuard::arm(db.clone(), request_id))
+}
+
+struct PreparedModel {
+    model: String,
+    reasoning_effort: Option<String>,
+    max_reasoning_effort: Option<String>,
+    forced: bool,
+    hold: BudgetGuard,
+}
+
+/// Pick the profile route, then reserve budget against the served model.
+async fn prepare_model_call(
+    db: &Database,
+    auth: &AuthContext,
+    user_id: &str,
+    requested_model: &str,
+    request_id: &str,
+    prompt_chars: usize,
+    max_completion_tokens: Option<u32>,
+) -> GatewayResult<PreparedModel> {
+    let user_id_owned = user_id.to_string();
+    let requested = requested_model.to_string();
+    let is_master = auth.is_master;
+    let active = if is_master {
+        None
+    } else {
+        db.run_blocking(move |db| db.active_chat_route(&user_id_owned))
+            .await?
+    };
+    let (model, reasoning_effort, max_reasoning_effort, forced) = match active {
+        Some(step) => (
+            step.model,
+            step.reasoning_effort,
+            step.max_reasoning_effort,
+            true,
+        ),
+        None => (requested, None, None, false),
+    };
+    let estimate = hold_estimate(&model, prompt_chars, max_completion_tokens);
+    let hold = preflight_async(db, auth, user_id, &model, request_id, estimate, forced).await?;
+    Ok(PreparedModel {
+        model,
+        reasoning_effort,
+        max_reasoning_effort,
+        forced,
+        hold,
+    })
+}
+
+fn apply_served_reasoning(
+    options: &mut ChatOptions,
+    step_effort: Option<&str>,
+    profile_max: Option<&str>,
+    auth: &AuthContext,
+) {
+    if let Some(effort) = step_effort {
+        options.reasoning_effort = Some(effort.to_string());
+    }
+    clamp_reasoning(options, profile_max);
+    apply_reasoning_cap(options, auth);
+}
+
+fn clamp_reasoning(options: &mut ChatOptions, max: Option<&str>) {
+    let Some(max) = max else {
+        return;
+    };
+    if let Some(effort) = options.reasoning_effort.as_deref()
+        && let Some(clamped) = crate::chat::reasoning::clamp_reasoning_effort_str(effort, max)
+    {
+        options.reasoning_effort = Some(clamped);
+    }
+}
+
+fn sync_responses_effort(body: &mut GatewayResponsesBody, effort: Option<&str>) {
+    let Some(effort) = effort else {
+        return;
+    };
+    let slot = body
+        .extra
+        .entry("reasoning".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(object) = slot.as_object_mut() {
+        object.insert("effort".to_string(), json!(effort));
+    } else {
+        *slot = json!({ "effort": effort });
+    }
 }
 
 fn responses_prompt_chars(body: &GatewayResponsesBody) -> usize {
@@ -333,7 +428,8 @@ pub async fn proxy_response(
     let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(auth, body.user.as_deref())?;
-    let model = body.model.clone();
+    let mut body = body;
+    let requested = body.model.clone();
     #[cfg(feature = "capture")]
     let max_response_bytes = capture_max_bytes(&capture);
     #[cfg(feature = "capture")]
@@ -343,23 +439,31 @@ pub async fn proxy_response(
         user_id: user_id.clone(),
         key_id: auth.key_id.clone(),
         api: CaptureApi::Responses,
-        model_requested: model.clone(),
+        model_requested: requested.clone(),
         stream: false,
         max_response_bytes,
     });
-    let estimate = hold_estimate(
-        &model,
+    let prepared = match prepare_model_call(
+        db,
+        auth,
+        &user_id,
+        &requested,
+        &request_id,
         responses_prompt_chars(&body),
         responses_max_completion(&body),
-    );
-    let mut hold = match preflight_async(db, auth, &user_id, &model, &request_id, estimate).await {
-        Ok(hold) => hold,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
         Err(err) => {
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
         }
     };
+    body.model = prepared.model.clone();
+    let model = prepared.model.clone();
+    let mut hold = prepared.hold;
     if proxy_provider::is_proxy_model(&model) {
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
@@ -385,7 +489,15 @@ pub async fn proxy_response(
     }
 
     let mut options = chat_options_from_responses(&body, &request_id);
-    apply_reasoning_cap(&mut options, auth);
+    apply_served_reasoning(
+        &mut options,
+        prepared.reasoning_effort.as_deref(),
+        prepared.max_reasoning_effort.as_deref(),
+        auth,
+    );
+    if prepared.forced {
+        sync_responses_effort(&mut body, options.reasoning_effort.as_deref());
+    }
     let messages = messages_from_responses_input(&body.input);
     let req_body = responses_body_value(body);
     #[cfg(feature = "capture")]
@@ -469,7 +581,8 @@ pub async fn proxy_response_stream(
     let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(&auth, body.user.as_deref())?;
-    let model = body.model.clone();
+    let mut body = body;
+    let requested = body.model.clone();
     #[cfg(feature = "capture")]
     let max_response_bytes = capture_max_bytes(&capture);
     #[cfg(feature = "capture")]
@@ -479,23 +592,31 @@ pub async fn proxy_response_stream(
         user_id: user_id.clone(),
         key_id: auth.key_id.clone(),
         api: CaptureApi::Responses,
-        model_requested: model.clone(),
+        model_requested: requested.clone(),
         stream: true,
         max_response_bytes,
     });
-    let estimate = hold_estimate(
-        &model,
+    let prepared = match prepare_model_call(
+        &db,
+        &auth,
+        &user_id,
+        &requested,
+        &request_id,
         responses_prompt_chars(&body),
         responses_max_completion(&body),
-    );
-    let hold = match preflight_async(&db, &auth, &user_id, &model, &request_id, estimate).await {
-        Ok(hold) => hold,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
         Err(err) => {
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
         }
     };
+    body.model = prepared.model.clone();
+    let model = prepared.model;
+    let hold = prepared.hold;
     if proxy_provider::is_proxy_model(&model) {
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
@@ -521,7 +642,15 @@ pub async fn proxy_response_stream(
     }
 
     let mut options = chat_options_from_responses(&body, &request_id);
-    apply_reasoning_cap(&mut options, &auth);
+    apply_served_reasoning(
+        &mut options,
+        prepared.reasoning_effort.as_deref(),
+        prepared.max_reasoning_effort.as_deref(),
+        &auth,
+    );
+    if prepared.forced {
+        sync_responses_effort(&mut body, options.reasoning_effort.as_deref());
+    }
     let messages = messages_from_responses_input(&body.input);
     let req_body = responses_body_value(body);
     #[cfg(feature = "capture")]
@@ -737,6 +866,7 @@ pub fn preflight(
     model: &str,
     request_id: &str,
     estimate_usd: f64,
+    skip_allowlist: bool,
 ) -> GatewayResult<()> {
     if !auth.is_master {
         if !model.contains(':') {
@@ -744,11 +874,13 @@ pub fn preflight(
                 "model must use provider:model format (e.g. openai:gpt-4o-mini); got {model}"
             )));
         }
-        let patterns = auth.allowed_models.as_deref().unwrap_or(&[]);
-        if !model_access::is_allowed(model, patterns) {
-            return Err(GatewayError::forbidden(format!(
-                "model {model} is not allowed for this API key"
-            )));
+        if !skip_allowlist {
+            let patterns = auth.allowed_models.as_deref().unwrap_or(&[]);
+            if !model_access::is_allowed(model, patterns) {
+                return Err(GatewayError::forbidden(format!(
+                    "model {model} is not allowed for this API key"
+                )));
+            }
         }
     }
     match db.reserve_budget(user_id, request_id, estimate_usd) {
@@ -772,6 +904,8 @@ pub async fn proxy_completion(
     let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(auth, body.user.as_deref())?;
+    let mut body = body;
+    let requested = body.completion.model.clone();
     #[cfg(feature = "capture")]
     let max_response_bytes = capture_max_bytes(&capture);
     #[cfg(feature = "capture")]
@@ -781,32 +915,33 @@ pub async fn proxy_completion(
         user_id: user_id.clone(),
         key_id: auth.key_id.clone(),
         api: CaptureApi::ChatCompletions,
-        model_requested: body.completion.model.clone(),
+        model_requested: requested.clone(),
         stream: false,
         max_response_bytes,
     });
-    let estimate = hold_estimate(
-        &body.completion.model,
-        message_prompt_chars(&body.completion.messages),
-        body.completion.max_completion_tokens,
-    );
-    let mut hold = match preflight_async(
+    let prepared = match prepare_model_call(
         db,
         auth,
         &user_id,
-        &body.completion.model,
+        &requested,
         &request_id,
-        estimate,
+        message_prompt_chars(&body.completion.messages),
+        body.completion.max_completion_tokens,
     )
     .await
     {
-        Ok(hold) => hold,
+        Ok(prepared) => prepared,
         Err(err) => {
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
         }
     };
+    body.completion.model = prepared.model.clone();
+    if let Some(effort) = prepared.reasoning_effort.clone() {
+        body.completion.reasoning_effort = Some(effort);
+    }
+    let mut hold = prepared.hold;
     if proxy_provider::is_proxy_model(&body.completion.model) {
         let model = body.completion.model.clone();
         let target = match load_proxy(state, &model).await {
@@ -833,7 +968,12 @@ pub async fn proxy_completion(
     }
 
     let mut options = chat_options_from_request(&body.completion, &request_id);
-    apply_reasoning_cap(&mut options, auth);
+    apply_served_reasoning(
+        &mut options,
+        prepared.reasoning_effort.as_deref(),
+        prepared.max_reasoning_effort.as_deref(),
+        auth,
+    );
     let tool_specs = tool_specs_from_request(&body.completion);
     let tool_refs = tool_specs.as_deref();
     #[cfg(feature = "capture")]
@@ -918,7 +1058,8 @@ pub async fn proxy_completion_stream(
     let capture = state.capture_sink();
     let request_id = Uuid::new_v4().to_string();
     let user_id = crate::gateway::auth::resolve_user_id(&auth, body.user.as_deref())?;
-    let model = body.completion.model.clone();
+    let mut body = body;
+    let requested = body.completion.model.clone();
     #[cfg(feature = "capture")]
     let max_response_bytes = capture_max_bytes(&capture);
     #[cfg(feature = "capture")]
@@ -928,23 +1069,34 @@ pub async fn proxy_completion_stream(
         user_id: user_id.clone(),
         key_id: auth.key_id.clone(),
         api: CaptureApi::ChatCompletions,
-        model_requested: model.clone(),
+        model_requested: requested.clone(),
         stream: true,
         max_response_bytes,
     });
-    let estimate = hold_estimate(
-        &model,
+    let prepared = match prepare_model_call(
+        &db,
+        &auth,
+        &user_id,
+        &requested,
+        &request_id,
         message_prompt_chars(&body.completion.messages),
         body.completion.max_completion_tokens,
-    );
-    let hold = match preflight_async(&db, &auth, &user_id, &model, &request_id, estimate).await {
-        Ok(hold) => hold,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
         Err(err) => {
             #[cfg(feature = "capture")]
             tap.finish_err(err.to_string());
             return Err(err);
         }
     };
+    body.completion.model = prepared.model.clone();
+    if let Some(effort) = prepared.reasoning_effort.clone() {
+        body.completion.reasoning_effort = Some(effort);
+    }
+    let model = prepared.model.clone();
+    let hold = prepared.hold;
     if proxy_provider::is_proxy_model(&model) {
         let target = match load_proxy(state, &model).await {
             Ok(target) => target,
@@ -970,7 +1122,12 @@ pub async fn proxy_completion_stream(
     }
 
     let mut options = chat_options_from_request(&body.completion, &request_id);
-    apply_reasoning_cap(&mut options, &auth);
+    apply_served_reasoning(
+        &mut options,
+        prepared.reasoning_effort.as_deref(),
+        prepared.max_reasoning_effort.as_deref(),
+        &auth,
+    );
     let tool_specs = tool_specs_from_request(&body.completion);
     let tool_refs = tool_specs.as_deref();
     #[cfg(feature = "capture")]
@@ -1468,5 +1625,42 @@ mod tests {
         let opts = chat_options_from_request(&req, "req-1");
         assert_eq!(opts.model, "openai:gpt-4o-mini");
         assert_eq!(opts.request_id.as_deref(), Some("req-1"));
+    }
+
+    fn auth_with_models(models: &[&str]) -> AuthContext {
+        AuthContext {
+            key_id: Some("k1".into()),
+            user_id: "user-1".into(),
+            is_master: false,
+            allowed_models: Some(models.iter().map(|model| (*model).to_string()).collect()),
+            max_reasoning_effort: Some("high".into()),
+        }
+    }
+
+    #[test]
+    fn route_reasoning_replaces_the_client_value_and_the_profile_cap_clamps_it() {
+        let mut options = ChatOptions {
+            model: "openai:gpt-4o".into(),
+            reasoning_effort: Some("max".into()),
+            ..ChatOptions::default()
+        };
+        apply_served_reasoning(
+            &mut options,
+            Some("xhigh"),
+            Some("medium"),
+            &auth_with_models(&["anthropic:*"]),
+        );
+        assert_eq!(options.reasoning_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn preflight_allows_a_routed_model_outside_the_key_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("route.db")).unwrap();
+        db.create_user("user-1", None, None).unwrap();
+        let auth = auth_with_models(&["anthropic:*"]);
+        let denied = preflight(&db, &auth, "user-1", "openai:gpt-4o", "req-a", 0.0, false);
+        assert!(denied.unwrap_err().to_string().contains("not allowed"));
+        preflight(&db, &auth, "user-1", "openai:gpt-4o", "req-b", 0.0, true).unwrap();
     }
 }

@@ -14,6 +14,11 @@ use crate::gateway::proxy_provider::{self, ProxyListTarget};
 use crate::http::{HttpClient, join_base_url};
 use crate::providers::{ProviderCredentials, ProviderId};
 
+/// Model list entries for exact route ids.
+pub fn entries_for_ids(ids: &[String]) -> Vec<Value> {
+    ids.iter().map(|id| model_entry(id)).collect()
+}
+
 fn model_entry(id: &str) -> Value {
     model_entry_with_context(id, None)
 }

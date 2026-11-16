@@ -60,6 +60,7 @@ pub async fn transcribe(
         &qualified,
         &request_id,
         estimate,
+        false,
     )
     .await?;
 

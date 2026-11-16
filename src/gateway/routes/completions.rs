@@ -39,6 +39,20 @@ pub async fn list_models(
     State(state): State<Arc<GatewayState>>,
     Auth(auth): Auth,
 ) -> Result<impl IntoResponse, GatewayError> {
+    if !auth.is_master {
+        let user_id = auth.user_id.clone();
+        if let Some(models) = state
+            .db
+            .run_blocking(move |db| db.route_models_for_user(&user_id))
+            .await?
+        {
+            return Ok(Json(serde_json::json!({
+                "object": "list",
+                "data": model_catalog::entries_for_ids(&models),
+                "refreshed_at": state.catalog.refreshed_at_ms(),
+            })));
+        }
+    }
     let master = state.config.master_key_exposed().to_string();
     let proxies = state
         .db

@@ -11,9 +11,10 @@ use uuid::Uuid;
 use crate::gateway::auth::hash_key;
 use crate::gateway::error::{GatewayError, GatewayResult};
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 const RESERVATION_TTL_MINUTES: i64 = 15;
 const MAX_PROFILE_MODELS: usize = 64;
+const MAX_PROFILE_ROUTES: usize = 16;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS budgets (
@@ -122,6 +123,17 @@ CREATE TABLE IF NOT EXISTS budget_reservations (
 );
 ";
 
+const MIGRATION_V6: &str = "
+CREATE TABLE IF NOT EXISTS profile_routes (
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    until_usd REAL,
+    reasoning_effort TEXT,
+    PRIMARY KEY (profile_id, position)
+);
+";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetResetLogRecord {
     pub id: String,
@@ -200,6 +212,24 @@ pub struct UserRecord {
     pub created_at: String,
 }
 
+/// One step of a profile route. Chat and Responses use the active step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProfileRouteStep {
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+/// The live route step for one user, plus the profile reasoning cap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveChatRoute {
+    pub model: String,
+    pub reasoning_effort: Option<String>,
+    pub max_reasoning_effort: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileRecord {
     pub id: String,
@@ -209,6 +239,8 @@ pub struct ProfileRecord {
     pub max_reasoning_effort: Option<String>,
     pub enabled: bool,
     pub allowed_models: Vec<String>,
+    #[serde(default)]
+    pub routes: Vec<ProfileRouteStep>,
     pub user_count: u32,
     pub created_at: String,
 }
@@ -609,6 +641,7 @@ impl Database {
         name: &str,
         description: Option<&str>,
         allowed_models: &[String],
+        routes: &[ProfileRouteStep],
         budget_id: Option<&str>,
         max_reasoning_effort: Option<&str>,
         enabled: bool,
@@ -617,7 +650,8 @@ impl Database {
         if name.is_empty() {
             return Err(GatewayError::bad_request("name is required"));
         }
-        validate_profile_models(allowed_models)?;
+        let routes = normalize_profile_routes(routes)?;
+        ensure_profile_policy(allowed_models, &routes)?;
         if let Some(bid) = budget_id
             && self.get_budget(bid)?.is_none()
         {
@@ -647,6 +681,7 @@ impl Database {
                 params![id, pattern],
             )?;
         }
+        write_profile_routes(&tx, &id, &routes)?;
         tx.commit()?;
         drop(conn);
         self.get_profile(&id)?
@@ -679,6 +714,7 @@ impl Database {
             let (id, name, description, budget_id, max_reasoning_effort, enabled, created_at) =
                 row?;
             let allowed_models = self.list_profile_models_in_conn(&conn, &id)?;
+            let routes = self.list_profile_routes_in_conn(&conn, &id)?;
             let user_count = self.count_profile_users_in_conn(&conn, &id)?;
             out.push(ProfileRecord {
                 id,
@@ -688,6 +724,7 @@ impl Database {
                 max_reasoning_effort,
                 enabled,
                 allowed_models,
+                routes,
                 user_count,
                 created_at,
             });
@@ -701,13 +738,11 @@ impl Database {
         name: Option<&str>,
         description: Option<Option<&str>>,
         allowed_models: Option<&[String]>,
+        routes: Option<&[ProfileRouteStep]>,
         budget_id: Option<Option<&str>>,
         max_reasoning_effort: Option<Option<&str>>,
         enabled: Option<bool>,
     ) -> GatewayResult<ProfileRecord> {
-        if let Some(models) = allowed_models {
-            validate_profile_models(models)?;
-        }
         if let Some(Some(bid)) = budget_id
             && self.get_budget(bid)?.is_none()
         {
@@ -715,20 +750,18 @@ impl Database {
                 "budget {bid} does not exist"
             )));
         }
+        let existing = self
+            .get_profile(profile_id)?
+            .ok_or_else(|| GatewayError::not_found(format!("profile {profile_id} not found")))?;
+        let next_models = allowed_models
+            .map(<[String]>::to_vec)
+            .unwrap_or(existing.allowed_models);
+        let next_routes = match routes {
+            Some(steps) => normalize_profile_routes(steps)?,
+            None => existing.routes,
+        };
+        ensure_profile_policy(&next_models, &next_routes)?;
         let conn = self.lock()?;
-        let exists = conn
-            .query_row(
-                "SELECT 1 FROM profiles WHERE id = ?1",
-                params![profile_id],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if !exists {
-            return Err(GatewayError::not_found(format!(
-                "profile {profile_id} not found"
-            )));
-        }
         let tx = conn.unchecked_transaction()?;
         if let Some(n) = name {
             let n = n.trim();
@@ -780,6 +813,10 @@ impl Database {
                     params![profile_id, pattern],
                 )?;
             }
+        }
+        if let Some(steps) = routes {
+            let steps = normalize_profile_routes(steps)?;
+            write_profile_routes(&tx, profile_id, &steps)?;
         }
         tx.commit()?;
         drop(conn);
@@ -856,6 +893,7 @@ impl Database {
             return Ok(None);
         };
         let allowed_models = self.list_profile_models_in_conn(conn, &id)?;
+        let routes = self.list_profile_routes_in_conn(conn, &id)?;
         let user_count = self.count_profile_users_in_conn(conn, &id)?;
         Ok(Some(ProfileRecord {
             id,
@@ -865,9 +903,61 @@ impl Database {
             max_reasoning_effort,
             enabled,
             allowed_models,
+            routes,
             user_count,
             created_at,
         }))
+    }
+
+    /// Active Chat and Responses step for a user on a routed profile.
+    ///
+    /// `Ok(None)` means the user has no enabled route. Spend past the last cap
+    /// is [`GatewayError::route_exhausted`].
+    pub fn active_chat_route(&self, user_id: &str) -> GatewayResult<Option<ActiveChatRoute>> {
+        let Some(profile) = self.enabled_profile_for_user(user_id)? else {
+            return Ok(None);
+        };
+        if profile.routes.is_empty() {
+            return Ok(None);
+        }
+        let (_, _, spend) = self.prepare_user_budget(user_id)?;
+        let step = select_route_step(&profile.routes, spend)?;
+        Ok(Some(ActiveChatRoute {
+            model: step.model.clone(),
+            reasoning_effort: step.reasoning_effort.clone(),
+            max_reasoning_effort: profile.max_reasoning_effort,
+        }))
+    }
+
+    /// Exact route models for `GET /v1/models` when the user has a route.
+    pub fn route_models_for_user(&self, user_id: &str) -> GatewayResult<Option<Vec<String>>> {
+        let Some(profile) = self.enabled_profile_for_user(user_id)? else {
+            return Ok(None);
+        };
+        if profile.routes.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            profile.routes.into_iter().map(|step| step.model).collect(),
+        ))
+    }
+
+    fn list_profile_routes_in_conn(
+        &self,
+        conn: &Connection,
+        profile_id: &str,
+    ) -> GatewayResult<Vec<ProfileRouteStep>> {
+        let mut stmt = conn.prepare(
+            "SELECT model, until_usd, reasoning_effort FROM profile_routes WHERE profile_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map(params![profile_id], |row| {
+            Ok(ProfileRouteStep {
+                model: row.get(0)?,
+                until_usd: row.get(1)?,
+                reasoning_effort: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     fn list_profile_models_in_conn(
@@ -903,15 +993,20 @@ impl Database {
         expires_at: Option<&str>,
         metadata_json: Option<&str>,
     ) -> GatewayResult<CreateKeyResult> {
-        if allowed_models.is_empty() {
-            return Err(GatewayError::bad_request(
-                "allowed_models must contain at least one pattern",
-            ));
-        }
         if !self.user_exists(user_id)? {
             return Err(GatewayError::bad_request(format!(
                 "user {user_id} does not exist"
             )));
+        }
+        if allowed_models.is_empty() {
+            let routed = self
+                .enabled_profile_for_user(user_id)?
+                .is_some_and(|profile| !profile.routes.is_empty());
+            if !routed {
+                return Err(GatewayError::bad_request(
+                    "allowed_models must contain at least one pattern",
+                ));
+            }
         }
 
         let plaintext = format!("sgw-{}", Uuid::new_v4().simple());
@@ -1741,7 +1836,36 @@ fn run_migrations(conn: &Connection) -> GatewayResult<()> {
     }
     if version < 5 {
         conn.execute_batch(MIGRATION_V5)?;
+        version = 5;
+        conn.pragma_update(None, "user_version", version)?;
+    }
+    if version < 6 {
+        conn.execute_batch(MIGRATION_V6)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    }
+    Ok(())
+}
+
+fn write_profile_routes(
+    tx: &Transaction<'_>,
+    profile_id: &str,
+    routes: &[ProfileRouteStep],
+) -> GatewayResult<()> {
+    tx.execute(
+        "DELETE FROM profile_routes WHERE profile_id = ?1",
+        params![profile_id],
+    )?;
+    for (position, step) in routes.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO profile_routes (profile_id, position, model, until_usd, reasoning_effort) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                profile_id,
+                i64::try_from(position).unwrap_or(i64::MAX),
+                step.model,
+                step.until_usd,
+                step.reasoning_effort,
+            ],
+        )?;
     }
     Ok(())
 }
@@ -1825,6 +1949,95 @@ fn validate_profile_models(allowed_models: &[String]) -> GatewayResult<()> {
         )));
     }
     Ok(())
+}
+
+fn ensure_profile_policy(
+    allowed_models: &[String],
+    routes: &[ProfileRouteStep],
+) -> GatewayResult<()> {
+    if !allowed_models.is_empty() {
+        validate_profile_models(allowed_models)?;
+    }
+    if allowed_models.is_empty() && routes.is_empty() {
+        return Err(GatewayError::bad_request(
+            "profile needs allowed_models or routes",
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_profile_routes(routes: &[ProfileRouteStep]) -> GatewayResult<Vec<ProfileRouteStep>> {
+    if routes.len() > MAX_PROFILE_ROUTES {
+        return Err(GatewayError::bad_request(format!(
+            "routes is limited to {MAX_PROFILE_ROUTES} steps"
+        )));
+    }
+    let mut out = Vec::with_capacity(routes.len());
+    let mut previous_cap: Option<f64> = None;
+    for (index, step) in routes.iter().enumerate() {
+        let model = step.model.trim();
+        let (provider, rest) = model.split_once(':').unwrap_or(("", ""));
+        if provider.is_empty() || rest.is_empty() || model.contains('*') {
+            return Err(GatewayError::bad_request(format!(
+                "route model must be an exact provider:model; got {model}"
+            )));
+        }
+        let last = index + 1 == routes.len();
+        let until_usd = match step.until_usd {
+            None if last => None,
+            None => {
+                return Err(GatewayError::bad_request(
+                    "only the last route step may omit until_usd",
+                ));
+            }
+            Some(cap) if cap.is_finite() && cap > 0.0 => {
+                if previous_cap.is_some_and(|previous| cap <= previous) {
+                    return Err(GatewayError::bad_request("until_usd values must increase"));
+                }
+                previous_cap = Some(cap);
+                Some(cap)
+            }
+            Some(_) => {
+                return Err(GatewayError::bad_request(
+                    "until_usd must be a finite number greater than 0",
+                ));
+            }
+        };
+        let reasoning_effort = match step.reasoning_effort.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(effort) => {
+                let parsed = crate::chat::reasoning::ReasoningEffort::parse(effort).ok_or_else(|| {
+                    GatewayError::bad_request(format!(
+                        "reasoning_effort must be one of none, minimal, low, medium, high, xhigh, max; got {effort}"
+                    ))
+                })?;
+                Some(parsed.as_api_str().to_string())
+            }
+        };
+        out.push(ProfileRouteStep {
+            model: model.to_string(),
+            until_usd,
+            reasoning_effort,
+        });
+    }
+    Ok(out)
+}
+
+/// First step whose cap is still above `spend`. A missing cap is the rest of the window.
+pub fn select_route_step(
+    routes: &[ProfileRouteStep],
+    spend: f64,
+) -> GatewayResult<&ProfileRouteStep> {
+    for step in routes {
+        match step.until_usd {
+            None => return Ok(step),
+            Some(cap) if spend < cap => return Ok(step),
+            Some(_) => {}
+        }
+    }
+    Err(GatewayError::route_exhausted(
+        "spend is past the last route step",
+    ))
 }
 
 fn map_budget(row: &rusqlite::Row<'_>) -> rusqlite::Result<BudgetRecord> {
@@ -1953,6 +2166,7 @@ mod tests {
                 "budgeted",
                 None,
                 &["openai:*".into()],
+                &[],
                 Some(&budget.id),
                 None,
                 true,
@@ -1986,6 +2200,7 @@ mod tests {
                 "budgeted",
                 None,
                 &["openai:*".into()],
+                &[],
                 Some(&budget.id),
                 None,
                 true,
@@ -2028,6 +2243,7 @@ mod tests {
                 "default",
                 Some("Default profile"),
                 &["openai:*".into(), "anthropic:*".into()],
+                &[],
                 Some(&budget.id),
                 Some("medium"),
                 true,
@@ -2046,6 +2262,7 @@ mod tests {
         let budget2 = db.create_budget(50.0, 86_400, true).unwrap();
         db.update_profile(
             &profile.id,
+            None,
             None,
             None,
             None,
@@ -2070,7 +2287,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(dir.path().join("test.db")).unwrap();
         let created = db
-            .create_profile("team", None, &["openai:*".into()], None, None, true)
+            .create_profile("team", None, &["openai:*".into()], &[], None, None, true)
             .unwrap();
         let listed = db.list_profiles().unwrap();
         assert_eq!(listed.len(), 1);
@@ -2080,6 +2297,7 @@ mod tests {
         db.update_profile(
             &created.id,
             Some("team-v2"),
+            None,
             None,
             None,
             None,
@@ -2104,6 +2322,7 @@ mod tests {
                 "budgeted",
                 None,
                 &["openai:*".into()],
+                &[],
                 Some(&budget.id),
                 None,
                 true,
@@ -2170,5 +2389,117 @@ mod tests {
         .unwrap();
         let user = db.get_user("user-1").unwrap().unwrap();
         assert_eq!(user.spend, 0.0);
+    }
+
+    fn route_step(
+        model: &str,
+        until_usd: Option<f64>,
+        reasoning_effort: Option<&str>,
+    ) -> ProfileRouteStep {
+        ProfileRouteStep {
+            model: model.to_string(),
+            until_usd,
+            reasoning_effort: reasoning_effort.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn select_route_step_follows_spend() {
+        let routes = vec![
+            route_step("openai:gpt-4o", Some(1.0), Some("high")),
+            route_step("openai:gpt-4o-mini", None, Some("low")),
+        ];
+        assert_eq!(
+            select_route_step(&routes, 0.0).unwrap().model,
+            "openai:gpt-4o"
+        );
+        assert_eq!(
+            select_route_step(&routes, 0.99).unwrap().model,
+            "openai:gpt-4o"
+        );
+        assert_eq!(
+            select_route_step(&routes, 1.0).unwrap().model,
+            "openai:gpt-4o-mini"
+        );
+    }
+
+    #[test]
+    fn select_route_step_rejects_spend_past_the_last_cap() {
+        let routes = vec![
+            route_step("openai:gpt-4o", Some(1.0), None),
+            route_step("openai:gpt-4o-mini", Some(2.0), None),
+        ];
+        let err = select_route_step(&routes, 2.0).unwrap_err();
+        assert!(err.to_string().contains("past the last route step"));
+    }
+
+    #[test]
+    fn profile_route_rejects_a_bad_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("test.db")).unwrap();
+        let err = db
+            .create_profile(
+                "bad",
+                None,
+                &[],
+                &[route_step("openai:*", Some(1.0), None)],
+                None,
+                None,
+                true,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("exact provider:model"));
+
+        let err = db
+            .create_profile(
+                "bad-order",
+                None,
+                &[],
+                &[
+                    route_step("openai:gpt-4o", Some(2.0), None),
+                    route_step("openai:gpt-4o-mini", Some(1.0), None),
+                ],
+                None,
+                None,
+                true,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("must increase"));
+    }
+
+    #[test]
+    fn active_chat_route_uses_user_spend() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("test.db")).unwrap();
+        let profile = db
+            .create_profile(
+                "sliding",
+                None,
+                &[],
+                &[
+                    route_step("openai:gpt-4o", Some(1.0), Some("HIGH")),
+                    route_step("openai:gpt-4o-mini", None, Some("low")),
+                ],
+                None,
+                Some("medium"),
+                true,
+            )
+            .unwrap();
+        assert_eq!(profile.routes[0].reasoning_effort.as_deref(), Some("high"));
+        db.create_user("user-1", None, Some(&profile.id)).unwrap();
+        let key = db
+            .create_api_key(Some("routed"), "user-1", &[], None, None)
+            .unwrap();
+        assert!(key.plaintext_key.starts_with("sgw-"));
+
+        let first = db.active_chat_route("user-1").unwrap().unwrap();
+        assert_eq!(first.model, "openai:gpt-4o");
+        assert_eq!(first.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(first.max_reasoning_effort.as_deref(), Some("medium"));
+
+        db.record_usage(None, "user-1", "openai:gpt-4o", 1, 1, 1.0, "req-1")
+            .unwrap();
+        let second = db.active_chat_route("user-1").unwrap().unwrap();
+        assert_eq!(second.model, "openai:gpt-4o-mini");
     }
 }

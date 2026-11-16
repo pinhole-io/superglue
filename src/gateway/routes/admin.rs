@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::gateway::GatewayState;
 use crate::gateway::auth::Auth;
-use crate::gateway::db::UsageSummaryGroupBy;
+use crate::gateway::db::{ProfileRouteStep, UsageSummaryGroupBy};
 use crate::gateway::error::{GatewayError, GatewayResult};
 use crate::gateway::routes::json_ok;
 use crate::providers::ProviderId;
@@ -63,7 +63,10 @@ pub struct UpdateUserBody {
 pub struct CreateProfileBody {
     pub name: String,
     pub description: Option<String>,
+    #[serde(default)]
     pub allowed_models: Vec<String>,
+    #[serde(default)]
+    pub routes: Vec<ProfileRouteStep>,
     pub budget_id: Option<String>,
     pub max_reasoning_effort: Option<String>,
     #[serde(default = "default_enabled")]
@@ -76,6 +79,7 @@ pub struct UpdateProfileBody {
     #[serde(default, deserialize_with = "double_option::deserialize")]
     pub description: Option<Option<String>>,
     pub allowed_models: Option<Vec<String>>,
+    pub routes: Option<Vec<ProfileRouteStep>>,
     #[serde(default, deserialize_with = "double_option::deserialize")]
     pub budget_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option::deserialize")]
@@ -140,6 +144,11 @@ pub async fn create_key(
                         "allowed_models must contain at least one pattern (or assign an enabled profile to the user)",
                     ));
                 };
+                if profile.allowed_models.is_empty() && profile.routes.is_empty() {
+                    return Err(GatewayError::bad_request(
+                        "allowed_models must contain at least one pattern (or assign an enabled profile to the user)",
+                    ));
+                }
                 allowed_models = profile.allowed_models.clone();
                 if let Some(effort) = profile.max_reasoning_effort.as_deref() {
                     match metadata.as_mut() {
@@ -274,6 +283,7 @@ pub async fn create_profile(
     let name = body.name.clone();
     let description = body.description.clone();
     let allowed_models = body.allowed_models.clone();
+    let routes = body.routes.clone();
     let budget_id = body.budget_id.clone();
     let max_reasoning_effort = body.max_reasoning_effort.clone();
     let enabled = body.enabled;
@@ -284,6 +294,7 @@ pub async fn create_profile(
                 &name,
                 description.as_deref(),
                 &allowed_models,
+                &routes,
                 budget_id.as_deref(),
                 max_reasoning_effort.as_deref(),
                 enabled,
@@ -310,6 +321,7 @@ pub async fn update_profile(
     let name = body.name.clone();
     let description = body.description.clone();
     let allowed_models = body.allowed_models.clone();
+    let routes = body.routes.clone();
     let budget_id = body.budget_id.clone();
     let max_reasoning_effort = body.max_reasoning_effort.clone();
     let enabled = body.enabled;
@@ -321,6 +333,7 @@ pub async fn update_profile(
                 name.as_deref(),
                 description.as_ref().map(|d| d.as_deref()),
                 allowed_models.as_deref(),
+                routes.as_deref(),
                 budget_id.as_ref().map(|b| b.as_deref()),
                 max_reasoning_effort.as_ref().map(|e| e.as_deref()),
                 enabled,

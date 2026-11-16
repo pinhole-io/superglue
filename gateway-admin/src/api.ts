@@ -11,6 +11,7 @@ import type {
   GatewayUsage,
   GatewayUser,
   GatewayHealth,
+  ProfileRouteStep,
   UsageSummary,
   BudgetResetLog,
 } from './types'
@@ -92,6 +93,7 @@ export const api = {
     name: string
     description?: string
     allowed_models: string[]
+    routes?: ProfileRouteStep[]
     budget_id?: string
     max_reasoning_effort?: string
     enabled?: boolean
@@ -102,6 +104,7 @@ export const api = {
       name?: string
       description?: string | null
       allowed_models?: string[]
+      routes?: ProfileRouteStep[]
       budget_id?: string | null
       max_reasoning_effort?: string | null
       enabled?: boolean

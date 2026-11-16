@@ -2601,3 +2601,175 @@ async fn chat_rejects_typesafe_model() {
     let message = body["error"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("systemone"), "{message}");
 }
+
+#[tokio::test]
+async fn profile_route_serves_the_step_and_ignores_the_key_allowlist() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "cmpl-route",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "hi" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with_openai(
+        MASTER_KEY,
+        &dir.path().join("route.db"),
+        &server.uri(),
+        "sk-test",
+    );
+    let app = router(state.clone());
+
+    let profile = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/profiles",
+            MASTER_KEY,
+            Some(json!({
+                "name": "sliding",
+                "routes": [
+                    {"model": "openai:gpt-5", "until_usd": 1.0, "reasoning_effort": "high"},
+                    {"model": "openai:gpt-5-mini", "reasoning_effort": "low"}
+                ]
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(profile.status(), StatusCode::OK);
+    let profile_body = body_to_json(profile.into_body()).await;
+    let profile_id = profile_body["id"].as_str().unwrap();
+    assert_eq!(profile_body["routes"][0]["model"], "openai:gpt-5");
+    assert_eq!(profile_body["routes"][0]["reasoning_effort"], "high");
+
+    app.clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/users",
+            MASTER_KEY,
+            Some(json!({ "user_id": "routed", "profile_id": profile_id })),
+        ))
+        .await
+        .unwrap();
+
+    let key_resp = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({
+                "user_id": "routed",
+                "name": "route-key",
+                "allowed_models": ["anthropic:*"]
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(key_resp.status(), StatusCode::OK);
+    let virtual_key = body_to_json(key_resp.into_body()).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let models = app
+        .clone()
+        .oneshot(auth_request("GET", "/v1/models", &virtual_key, None))
+        .await
+        .unwrap();
+    assert_eq!(models.status(), StatusCode::OK);
+    let models_body = body_to_json(models.into_body()).await;
+    let ids: Vec<_> = models_body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["openai:gpt-5", "openai:gpt-5-mini"]);
+
+    let chat = |app: axum::Router, key: String| async move {
+        app.oneshot(auth_request(
+            "POST",
+            "/v1/chat/completions",
+            &key,
+            Some(json!({
+                "model": "anthropic:claude-3-5-sonnet-20241022",
+                "reasoning_effort": "max",
+                "messages": [{ "role": "user", "content": "hello" }]
+            })),
+        ))
+        .await
+        .unwrap()
+    };
+
+    let first = chat(app.clone(), virtual_key.clone()).await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    state
+        .db
+        .record_usage(None, "routed", "openai:gpt-5", 1, 1, 1.0, "manual-spend")
+        .unwrap();
+
+    let second = chat(app.clone(), virtual_key).await;
+    assert_eq!(second.status(), StatusCode::OK);
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 2);
+    let first_body: serde_json::Value = received[0].body_json().unwrap();
+    let second_body: serde_json::Value = received[1].body_json().unwrap();
+    assert_eq!(first_body["model"], "openai:gpt-5");
+    assert_eq!(first_body["reasoning_effort"], "high");
+    assert_eq!(second_body["model"], "openai:gpt-5-mini");
+    assert_eq!(second_body["reasoning_effort"], "low");
+
+    app.clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/users",
+            MASTER_KEY,
+            Some(json!({ "user_id": "plain" })),
+        ))
+        .await
+        .unwrap();
+    let plain_key = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v1/keys",
+            MASTER_KEY,
+            Some(json!({
+                "user_id": "plain",
+                "allowed_models": ["anthropic:*"]
+            })),
+        ))
+        .await
+        .unwrap();
+    let plain_key = body_to_json(plain_key.into_body()).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let denied = app
+        .oneshot(auth_request(
+            "POST",
+            "/v1/chat/completions",
+            &plain_key,
+            Some(json!({
+                "model": "openai:gpt-4o",
+                "messages": [{ "role": "user", "content": "hello" }]
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}

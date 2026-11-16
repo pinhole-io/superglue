@@ -7,7 +7,8 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use crate::gateway::db::{
-    ApiKeyListItem, BudgetRecord, ProfileRecord, ProxyProviderRecord, UsageRecord, UserRecord,
+    ApiKeyListItem, BudgetRecord, ProfileRecord, ProfileRouteStep, ProxyProviderRecord,
+    UsageRecord, UserRecord,
 };
 use crate::gateway::error::{GatewayError, GatewayResult};
 
@@ -210,6 +211,7 @@ impl RemoteClient {
         name: &str,
         description: Option<&str>,
         allowed_models: &[String],
+        routes: &[ProfileRouteStep],
         budget_id: Option<&str>,
         max_reasoning_effort: Option<&str>,
         enabled: bool,
@@ -220,6 +222,7 @@ impl RemoteClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             description: Option<&'a str>,
             allowed_models: &'a [String],
+            routes: &'a [ProfileRouteStep],
             #[serde(skip_serializing_if = "Option::is_none")]
             budget_id: Option<&'a str>,
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,6 +235,7 @@ impl RemoteClient {
                 name,
                 description,
                 allowed_models,
+                routes,
                 budget_id,
                 max_reasoning_effort,
                 enabled,
@@ -251,6 +255,7 @@ impl RemoteClient {
         name: Option<&str>,
         description: Option<Option<&str>>,
         allowed_models: Option<&[String]>,
+        routes: Option<&[ProfileRouteStep]>,
         budget_id: Option<Option<&str>>,
         max_reasoning_effort: Option<Option<&str>>,
         enabled: Option<bool>,
@@ -264,6 +269,8 @@ impl RemoteClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             allowed_models: Option<&'a [String]>,
             #[serde(skip_serializing_if = "Option::is_none")]
+            routes: Option<&'a [ProfileRouteStep]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
             budget_id: Option<Option<&'a str>>,
             #[serde(skip_serializing_if = "Option::is_none")]
             max_reasoning_effort: Option<Option<&'a str>>,
@@ -276,6 +283,7 @@ impl RemoteClient {
                 name,
                 description,
                 allowed_models,
+                routes,
                 budget_id,
                 max_reasoning_effort,
                 enabled,

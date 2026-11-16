@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
-import { shortId, userLabel } from '../../components/compactDisplay'
+import { routeSummary, shortId, userLabel } from '../../components/compactDisplay'
 import { ChipRow, RowActions } from '../../components/compactUi'
 import { FamilyBadge } from '../../components/FamilyBadge'
 import { UserSelect } from '../../components/GatewayEntitySelect'
@@ -191,10 +191,13 @@ export function GatewayKeysPage() {
         delete metadata.max_reasoning_effort
       }
       await api.updateKey(key.id, {
-        allowed_models: profile.allowed_models,
+        ...(profile.allowed_models.length > 0 ? { allowed_models: profile.allowed_models } : {}),
         metadata,
       })
-      setNotice(`Applied profile “${profile.name}” to key ${shortId(key.key_prefix)}.`)
+      const routeNote = profile.routes?.length
+        ? ' Chat and Responses still read the route from the profile.'
+        : ''
+      setNotice(`Applied profile “${profile.name}” to key ${shortId(key.key_prefix)}.${routeNote}`)
       load()
     } catch (e) {
       setError(errorText(e))
@@ -222,9 +225,13 @@ export function GatewayKeysPage() {
     }
   }
 
+  const inheritReady = Boolean(
+    selectedUserProfile
+    && (selectedUserProfile.allowed_models.length > 0 || (selectedUserProfile.routes?.length ?? 0) > 0),
+  )
   const canCreate =
     Boolean(form.user_id) &&
-    (Boolean(form.inheritProfile && selectedUserProfile) || form.models.length > 0)
+    (Boolean(form.inheritProfile && inheritReady) || form.models.length > 0)
 
   return (
     <>
@@ -331,7 +338,13 @@ export function GatewayKeysPage() {
             {selectedUserProfile && form.inheritProfile ? (
               <Alert>
                 <AlertDescription>
-                  From profile “{selectedUserProfile.name}”: {selectedUserProfile.allowed_models.join(', ')}
+                  {routeSummary(selectedUserProfile.routes) ? (
+                    <>
+                      Chat and Responses use this route on each request: {routeSummary(selectedUserProfile.routes)}.
+                      {' '}
+                    </>
+                  ) : null}
+                  From profile “{selectedUserProfile.name}”: {selectedUserProfile.allowed_models.join(', ') || 'no model list'}
                   {selectedUserProfile.max_reasoning_effort
                     ? ` · reasoning ${selectedUserProfile.max_reasoning_effort}`
                     : ''}

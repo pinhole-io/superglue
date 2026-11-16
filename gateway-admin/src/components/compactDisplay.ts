@@ -1,4 +1,15 @@
-import type { GatewayKey, GatewayUser } from '../types'
+import type { GatewayKey, GatewayUser, ProfileRouteStep } from '../types'
+
+export function routeSummary(routes: ProfileRouteStep[] | undefined): string | null {
+  if (!routes?.length) return null
+  return routes
+    .map((step) => {
+      const cap = step.until_usd == null ? 'rest' : `$${step.until_usd}`
+      const effort = step.reasoning_effort ? ` ${step.reasoning_effort}` : ''
+      return `${step.model} until ${cap}${effort}`
+    })
+    .join(' → ')
+}
 
 export function shortId(value: string | null | undefined): string {
   if (!value) return '—'

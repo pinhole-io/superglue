@@ -77,6 +77,15 @@ impl GatewayError {
     }
 
     #[must_use]
+    pub fn route_exhausted(message: impl Into<String>) -> Self {
+        Self::WithStatus {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            kind: "route_exhausted".into(),
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
     pub fn payload_too_large(message: impl Into<String>) -> Self {
         Self::WithStatus {
             status: StatusCode::PAYLOAD_TOO_LARGE,

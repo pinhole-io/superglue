@@ -16,6 +16,12 @@ export interface GatewayUser {
   created_at: string
 }
 
+export interface ProfileRouteStep {
+  model: string
+  until_usd?: number | null
+  reasoning_effort?: string | null
+}
+
 export interface GatewayProfile {
   id: string
   name: string
@@ -24,6 +30,7 @@ export interface GatewayProfile {
   max_reasoning_effort: string | null
   enabled: boolean
   allowed_models: string[]
+  routes: ProfileRouteStep[]
   user_count: number
   created_at: string
 }

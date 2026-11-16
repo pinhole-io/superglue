@@ -87,6 +87,30 @@ allowlist until you update them.
 
 Key creation prints the plaintext secret **once** — store it immediately.
 
+## Profile routes
+
+A route makes the user standalone for Chat and Responses. The gateway ignores the model in the request. It serves the active step.
+
+Each step has an exact `provider:model`, an optional USD cap, and an optional reasoning level. The first step with `users.spend < until_usd` is active. A missing cap means the rest of the budget window. Spend resets when that window resets.
+
+One request can cross a cap. The next request uses the next step. When spend is past every cap, the gateway returns HTTP 429 with `route_exhausted`. The user budget can still return `budget_exceeded`.
+
+The profile `max_reasoning_effort` clamps the step. The response `model` field is the served model.
+
+Embeddings, audio, and System One keep the key allowlist. A route-only profile can create a key with no `--model`.
+
+```bash
+superglue gateway profile create --name sliding \
+  --budget-id <budget-id> \
+  --route '{"model":"openai:gpt-4o","until_usd":1,"reasoning_effort":"high"}' \
+  --route '{"model":"openai:gpt-4o-mini","reasoning_effort":"low"}'
+
+superglue gateway user create --user-id alice --profile-id <profile-id>
+superglue gateway key create --user-id alice
+```
+
+`--clear-routes` removes the route. The profile must still have allowed models.
+
 ## Web admin
 
 Build the gateway admin UI before building the gateway binary:

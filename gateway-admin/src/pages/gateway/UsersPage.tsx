@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
-import { shortId } from '../../components/compactDisplay'
+import { routeSummary, shortId } from '../../components/compactDisplay'
 import { RowActions } from '../../components/compactUi'
 import { InfoTip } from '../../components/InfoTip'
 import { PageHeader } from '../../components/PageHeader'
@@ -197,6 +197,11 @@ export function GatewayUsersPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {routeSummary(profile?.routes) ? (
+                        <p className="m-0 mt-1 max-w-64 text-xs text-muted-foreground">
+                          {routeSummary(profile?.routes)}
+                        </p>
+                      ) : null}
                     </TableCell>
                     <TableCell className="font-mono" title={budget?.id ?? profile?.budget_id ?? undefined}>
                       {budget
@@ -255,6 +260,11 @@ export function GatewayUsersPage() {
                 </p>
               ) : selectedProfile ? (
                 <p className="m-0 text-xs text-muted-foreground">This profile has no budget.</p>
+              ) : null}
+              {routeSummary(selectedProfile?.routes) ? (
+                <p className="m-0 text-xs text-muted-foreground">
+                  Route: {routeSummary(selectedProfile?.routes)}
+                </p>
               ) : null}
             </div>
           </div>

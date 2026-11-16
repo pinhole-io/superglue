@@ -64,6 +64,7 @@ pub async fn create_embedding(
         &qualified,
         &request_id,
         estimate,
+        false,
     )
     .await?;
 
@@ -163,7 +164,16 @@ async fn proxy_embedding(
     let qualified = body.model.clone();
     let user_id = resolve_user_id(auth, body.user.as_deref())?;
     let request_id = Uuid::new_v4().to_string();
-    let mut hold = preflight_async(&state.db, auth, &user_id, &qualified, &request_id, 0.0).await?;
+    let mut hold = preflight_async(
+        &state.db,
+        auth,
+        &user_id,
+        &qualified,
+        &request_id,
+        0.0,
+        false,
+    )
+    .await?;
     let model = body.model.clone();
     let master = state.config.master_key_exposed().to_string();
     let target = state

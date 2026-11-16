@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::gateway::db::Database;
+use crate::gateway::db::{Database, ProfileRouteStep};
 use crate::gateway::error::{GatewayError, GatewayResult};
 use crate::gateway::remote::RemoteClient;
 use crate::gateway::{GatewayConfig, serve};
@@ -272,8 +272,12 @@ pub enum ProfileCommand {
         #[arg(long)]
         description: Option<String>,
         /// Allowed model pattern (repeatable).
-        #[arg(long = "model", required = true)]
+        #[arg(long = "model")]
         models: Vec<String>,
+        /// Route step as JSON. Repeat once per step.
+        /// Example: {"model":"openai:gpt-4o","until_usd":1,"reasoning_effort":"high"}
+        #[arg(long = "route")]
+        routes: Vec<String>,
         #[arg(long)]
         budget_id: Option<String>,
         #[arg(long)]
@@ -298,6 +302,12 @@ pub enum ProfileCommand {
         description: Option<String>,
         #[arg(long = "model")]
         models: Vec<String>,
+        /// Route step as JSON. Repeat once per step. Replaces the whole route.
+        #[arg(long = "route")]
+        routes: Vec<String>,
+        /// Remove the route. The profile must still have allowed models.
+        #[arg(long)]
+        clear_routes: bool,
         #[arg(long)]
         budget_id: Option<String>,
         #[arg(long)]
@@ -603,6 +613,11 @@ fn run_key(path: &PathBuf, command: KeyCommand) -> GatewayResult<()> {
                         "allowed_models must contain at least one pattern (or assign an enabled profile to the user)",
                     ));
                 };
+                if profile.allowed_models.is_empty() && profile.routes.is_empty() {
+                    return Err(GatewayError::bad_request(
+                        "allowed_models must contain at least one pattern (or assign an enabled profile to the user)",
+                    ));
+                }
                 allowed_models = profile.allowed_models;
                 if let Some(effort) = profile.max_reasoning_effort {
                     metadata_json =
@@ -684,25 +699,29 @@ fn run_profile(path: &PathBuf, command: ProfileCommand) -> GatewayResult<()> {
             name,
             description,
             models,
+            routes,
             budget_id,
             max_reasoning_effort,
             enabled,
             output,
         } => {
+            let routes = parse_route_steps(&routes)?;
             let profile = db.create_profile(
                 &name,
                 description.as_deref(),
                 &models,
+                &routes,
                 budget_id.as_deref(),
                 max_reasoning_effort.as_deref(),
                 enabled,
             )?;
             print_value(&profile, output, |p| {
                 println!(
-                    "Created profile {} ({})  models=[{}]  budget={}  reasoning={}  enabled={}",
+                    "Created profile {} ({})  models=[{}]  routes=[{}]  budget={}  reasoning={}  enabled={}",
                     p.id,
                     p.name,
                     p.allowed_models.join(", "),
+                    format_routes(&p.routes),
                     p.budget_id.as_deref().unwrap_or("-"),
                     p.max_reasoning_effort.as_deref().unwrap_or("-"),
                     p.enabled,
@@ -718,12 +737,13 @@ fn run_profile(path: &PathBuf, command: ProfileCommand) -> GatewayResult<()> {
                 }
                 for p in profiles {
                     println!(
-                        "{}  {}  users={}  budget={}  models=[{}]  enabled={}",
+                        "{}  {}  users={}  budget={}  models=[{}]  routes=[{}]  enabled={}",
                         p.id,
                         p.name,
                         p.user_count,
                         p.budget_id.as_deref().unwrap_or("-"),
                         p.allowed_models.join(", "),
+                        format_routes(&p.routes),
                         p.enabled,
                     );
                 }
@@ -734,6 +754,8 @@ fn run_profile(path: &PathBuf, command: ProfileCommand) -> GatewayResult<()> {
             name,
             description,
             models,
+            routes,
+            clear_routes,
             budget_id,
             max_reasoning_effort,
             enabled,
@@ -744,11 +766,14 @@ fn run_profile(path: &PathBuf, command: ProfileCommand) -> GatewayResult<()> {
             } else {
                 Some(models.as_slice())
             };
+            let parsed_routes = parse_route_steps(&routes)?;
+            let routes_update = route_update(clear_routes, &routes, &parsed_routes)?;
             let profile = db.update_profile(
                 &id,
                 name.as_deref(),
                 description.as_ref().map(|d| Some(d.as_str())),
                 models_update,
+                routes_update,
                 budget_id.as_ref().map(|b| Some(b.as_str())),
                 max_reasoning_effort.as_ref().map(|e| Some(e.as_str())),
                 enabled,
@@ -1199,16 +1224,19 @@ async fn run_profile_remote(db_args: &DbArgs, command: ProfileCommand) -> Gatewa
             name,
             description,
             models,
+            routes,
             budget_id,
             max_reasoning_effort,
             enabled,
             output,
         } => {
+            let routes = parse_route_steps(&routes)?;
             let profile = client
                 .create_profile(
                     &name,
                     description.as_deref(),
                     &models,
+                    &routes,
                     budget_id.as_deref(),
                     max_reasoning_effort.as_deref(),
                     enabled,
@@ -1216,10 +1244,11 @@ async fn run_profile_remote(db_args: &DbArgs, command: ProfileCommand) -> Gatewa
                 .await?;
             print_value(&profile, output, |p| {
                 println!(
-                    "Created profile {} ({})  models=[{}]  budget={}  reasoning={}  enabled={}",
+                    "Created profile {} ({})  models=[{}]  routes=[{}]  budget={}  reasoning={}  enabled={}",
                     p.id,
                     p.name,
                     p.allowed_models.join(", "),
+                    format_routes(&p.routes),
                     p.budget_id.as_deref().unwrap_or("-"),
                     p.max_reasoning_effort.as_deref().unwrap_or("-"),
                     p.enabled,
@@ -1235,12 +1264,13 @@ async fn run_profile_remote(db_args: &DbArgs, command: ProfileCommand) -> Gatewa
                 }
                 for p in profiles {
                     println!(
-                        "{}  {}  users={}  budget={}  models=[{}]  enabled={}",
+                        "{}  {}  users={}  budget={}  models=[{}]  routes=[{}]  enabled={}",
                         p.id,
                         p.name,
                         p.user_count,
                         p.budget_id.as_deref().unwrap_or("-"),
                         p.allowed_models.join(", "),
+                        format_routes(&p.routes),
                         p.enabled,
                     );
                 }
@@ -1251,6 +1281,8 @@ async fn run_profile_remote(db_args: &DbArgs, command: ProfileCommand) -> Gatewa
             name,
             description,
             models,
+            routes,
+            clear_routes,
             budget_id,
             max_reasoning_effort,
             enabled,
@@ -1261,12 +1293,15 @@ async fn run_profile_remote(db_args: &DbArgs, command: ProfileCommand) -> Gatewa
             } else {
                 Some(models.as_slice())
             };
+            let parsed_routes = parse_route_steps(&routes)?;
+            let routes_update = route_update(clear_routes, &routes, &parsed_routes)?;
             let profile = client
                 .update_profile(
                     &id,
                     name.as_deref(),
                     description.as_ref().map(|d| Some(d.as_str())),
                     models_update,
+                    routes_update,
                     budget_id.as_ref().map(|b| Some(b.as_str())),
                     max_reasoning_effort.as_ref().map(|e| Some(e.as_str())),
                     enabled,
@@ -1466,6 +1501,50 @@ async fn run_usage_remote(db_args: &DbArgs, command: UsageCommand) -> GatewayRes
         }
     }
     Ok(())
+}
+
+fn parse_route_steps(raw: &[String]) -> GatewayResult<Vec<ProfileRouteStep>> {
+    raw.iter()
+        .map(|step| {
+            serde_json::from_str(step)
+                .map_err(|err| GatewayError::bad_request(format!("invalid --route JSON: {err}")))
+        })
+        .collect()
+}
+
+fn format_routes(routes: &[ProfileRouteStep]) -> String {
+    if routes.is_empty() {
+        return "-".into();
+    }
+    routes
+        .iter()
+        .map(|step| {
+            let cap = step
+                .until_usd
+                .map(|amount| format!("${amount}"))
+                .unwrap_or_else(|| "rest".into());
+            let effort = step.reasoning_effort.as_deref().unwrap_or("-");
+            format!("{} until {cap} reasoning {effort}", step.model)
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn route_update<'a>(
+    clear_routes: bool,
+    raw: &[String],
+    parsed: &'a [ProfileRouteStep],
+) -> GatewayResult<Option<&'a [ProfileRouteStep]>> {
+    if clear_routes && !raw.is_empty() {
+        return Err(GatewayError::bad_request(
+            "pass --clear-routes or --route, not both",
+        ));
+    }
+    if clear_routes || !parsed.is_empty() {
+        Ok(Some(parsed))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
