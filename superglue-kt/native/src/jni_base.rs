@@ -18,6 +18,9 @@ pub fn runtime() -> &'static Runtime {
 }
 
 pub fn ensure_jvm(env: &mut JNIEnv) -> Arc<JavaVM> {
+    // HTTPS on Android panics unless the platform verifier has a JVM and a Context.
+    #[cfg(target_os = "android")]
+    crate::android_verifier::ensure_initialized(env);
     JVM.get_or_init(|| {
         let vm = env.get_java_vm().expect("get_java_vm");
         Arc::new(vm)
@@ -26,7 +29,75 @@ pub fn ensure_jvm(env: &mut JNIEnv) -> Arc<JavaVM> {
 }
 
 pub fn jthrow(env: &mut JNIEnv, msg: &str) {
+    android_log_error(msg);
     let _ = env.throw_new("java/lang/RuntimeException", msg);
+}
+
+/// `reqwest` hides its cause behind `Display`. Walk it so the phone can show it.
+pub fn explain_chat(err: &superglue::chat::ChatError) -> String {
+    // `PartialTurn` prints the inner error and hides the variant.
+    let mut root = err;
+    while let superglue::chat::ChatError::PartialTurn { cause, .. } = root {
+        root = cause;
+    }
+    let mut text = err.to_string();
+    match root {
+        superglue::chat::ChatError::Http(http) => append_http_cause(&mut text, http),
+        other => {
+            text.push_str(" || ");
+            text.push_str(&format!("{other:?}"));
+        }
+    }
+    text
+}
+
+fn append_http_cause(text: &mut String, err: &superglue::http::Error) {
+    match err {
+        superglue::http::Error::RetriesExhausted { last, .. } => append_http_cause(text, last),
+        superglue::http::Error::Reqwest(reqwest) => {
+            text.push_str(" || ");
+            let mut source = std::error::Error::source(reqwest);
+            if source.is_none() {
+                text.push_str("no-source ");
+            }
+            while let Some(next) = source {
+                text.push_str(&next.to_string());
+                text.push_str(" / ");
+                source = std::error::Error::source(next);
+            }
+            text.push_str(&format!(
+                "connect={} timeout={} debug={reqwest:?}",
+                reqwest.is_connect(),
+                reqwest.is_timeout(),
+            ));
+        }
+        other => {
+            text.push_str(" || other=");
+            text.push_str(&format!("{other:?}"));
+        }
+    }
+}
+
+fn android_log_error(msg: &str) {
+    #[cfg(target_os = "android")]
+    {
+        #[link(name = "log")]
+        unsafe extern "C" {
+            fn __android_log_write(prio: i32, tag: *const u8, text: *const u8) -> i32;
+        }
+        let tag = b"superglue\0";
+        let flat = msg.replace(['\0', '\n', '\r'], " ");
+        let flat = flat.chars().take(3000).collect::<String>();
+        let mut bytes = flat.into_bytes();
+        bytes.push(0);
+        unsafe {
+            __android_log_write(6, tag.as_ptr(), bytes.as_ptr());
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = msg;
+    }
 }
 
 pub fn jstr_from_str(env: &mut JNIEnv, s: &str) -> jstring {

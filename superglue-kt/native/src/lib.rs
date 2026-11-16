@@ -1,6 +1,8 @@
 //! Android JNI (`libsuperglue_kt.so`) for the Kotlin `com.superglue.kt` package.
 
 mod adapters;
+#[cfg(target_os = "android")]
+mod android_verifier;
 mod config;
 mod handle;
 mod jni_base;

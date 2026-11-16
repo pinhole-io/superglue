@@ -4,3 +4,4 @@
 -keep class com.superglue.kt.GuardrailCallback { *; }
 -keep class com.superglue.kt.StreamTokenCallback { *; }
 -keep class com.superglue.kt.VoiceEventCallback { *; }
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

@@ -12,7 +12,8 @@ use crate::handle::get_client;
 use crate::handle::get_convo;
 use crate::handle::remove;
 use crate::jni_base::{
-    completion_outcome_json, effective_http, jstr_from_str, jthrow, opt_i64, runtime,
+    completion_outcome_json, effective_http, ensure_jvm, explain_chat, jstr_from_str, jthrow,
+    opt_i64, runtime,
 };
 
 use super::jni_client::{jstring_to_rust, opt_request_id};
@@ -122,6 +123,7 @@ pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_conversat
     connect_timeout_secs: i64,
     request_id: JString,
 ) -> jstring {
+    let _ = ensure_jvm(&mut env);
     let c = match get_convo(handle as u64) {
         Ok(s) => s,
         Err(e) => {
@@ -157,7 +159,7 @@ pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_conversat
     )) {
         Ok(o) => o,
         Err(e) => {
-            jthrow(&mut env, &e.to_string());
+            jthrow(&mut env, &explain_chat(&e));
             return std::ptr::null_mut();
         }
     };
