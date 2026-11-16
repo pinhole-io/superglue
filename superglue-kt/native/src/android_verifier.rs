@@ -73,12 +73,7 @@ fn bind_process_network(env: &mut JNIEnv, app: &JObject) -> Result<bool, jni::er
         return Ok(false);
     }
     let network = env
-        .call_method(
-            &manager,
-            "getActiveNetwork",
-            "()Landroid/net/Network;",
-            &[],
-        )?
+        .call_method(&manager, "getActiveNetwork", "()Landroid/net/Network;", &[])?
         .l()?;
     if network.is_null() {
         return Ok(false);
