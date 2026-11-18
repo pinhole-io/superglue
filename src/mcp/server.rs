@@ -18,8 +18,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use super::McpError;
 
 /// A synchronous tool body. The server runs it off the async worker.
-pub type ToolFn =
-    Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
+pub type ToolFn = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
 
 /// One tool the server advertises.
 pub struct ToolDef {
@@ -87,7 +86,11 @@ impl ToolServer {
 
     /// Names in advertisement order.
     pub fn names(&self) -> Vec<String> {
-        self.inner.tools.iter().map(|tool| tool.name.clone()).collect()
+        self.inner
+            .tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect()
     }
 
     /// Call one tool. An unknown name is an error the caller can show.
