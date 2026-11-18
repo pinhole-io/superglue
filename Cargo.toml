@@ -85,7 +85,7 @@ regex = "1.13.1"
 opentelemetry = { version = "0.32", optional = true }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"], optional = true }
-rmcp = { version = "2.2", optional = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "2.2", optional = true, features = ["client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest", "reqwest"] }
 http = { version = "1", optional = true }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock", "std"] }
 chacha20poly1305 = { version = "0.10", optional = true }

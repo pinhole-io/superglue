@@ -1,7 +1,11 @@
-//! MCP client bridge — connect MCP servers and register tools into [`ToolRegistry`].
+//! MCP client and a small tool server.
+//!
+//! The client connects to other servers and registers their tools.
+//! [`server::ToolServer`] is the reusable server. A caller registers tools and serves stdio or any byte stream.
 
 pub mod config;
 pub mod runtime;
+pub mod server;
 
 pub use config::{
     DEFAULT_CONTEXT7_MCP_URL, McpAuthKind, McpServerEntry, McpServerStatus, McpServersFile,
@@ -10,6 +14,7 @@ pub use config::{
     record_server_status, resolve_env_value, resolve_headers, save_servers_file, save_status_file,
 };
 pub use runtime::{McpConnectOptions, McpConnectSummary, McpConnections, connect_enabled_servers};
+pub use server::{ToolDef, ToolFn, ToolServer};
 
 use std::collections::HashMap;
 use std::sync::Arc;
