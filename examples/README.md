@@ -69,6 +69,7 @@ Set `OPENAI_BASE_URL` yourself when you want a specific host. See `08_custom_bas
 | 42 | Advanced judge, builder | yes | yes | yes | `example42_judge_advanced` |
 | 43 | Graph builder | yes | yes | yes | `example43_graph` |
 | 44 | Multi-judge graph | yes | yes | yes | `example44_multi_judge` |
+| 45 | OpenAI Decisions | yes | | | |
 | demo | Short demo | yes | yes | yes | `example_demo` |
 
 Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
@@ -88,6 +89,7 @@ Run Rust with `cargo run --example <name>`. Omit the `.rs` suffix.
 | `42_judge_advanced` | `TYPESAFE_API_KEY`. Python, JavaScript, and Kotlin send the same triage config. |
 | `43_graph` | `OPENAI_API_KEY`. Drafts, then polishes. `TYPESAFE_API_KEY` adds a judge before the polish step. Python, JavaScript, and Kotlin send the same spec. |
 | `44_multi_judge` | `OPENAI_API_KEY` and `TYPESAFE_API_KEY`. Three judges score one draft in one wave. Safety chooses a holding reply or a final reply. Python, JavaScript, and Kotlin send the same spec. |
+| `45_decisions` | `OPENAI_API_KEY`. The model is `gpt-6-luna`. The example exits when that key is unset. |
 
 ## Rust `Client`
 

@@ -996,6 +996,15 @@ impl Client {
         crate::systemone::system_one(&self.inner.http, &credentials, request).await
     }
 
+    /// Evaluate `request` with the OpenAI Decisions API.
+    pub async fn decisions(
+        &self,
+        request: crate::decisions::DecisionRequest,
+    ) -> Result<crate::decisions::DecisionResponse, crate::decisions::DecisionError> {
+        let credentials = crate::chat::credentials_for(&self.inner.options);
+        crate::decisions::decisions(&self.inner.http, &credentials, request).await
+    }
+
     /// Run `config` against `input` and return the mapped verdict.
     pub async fn judge(
         &self,

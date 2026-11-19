@@ -1300,6 +1300,39 @@ impl PyClient {
         Ok(obj.unbind().into_any())
     }
 
+    /// Evaluate `input` with the OpenAI Decisions API.
+    ///
+    /// Args:
+    ///   input: Plain text or a JSON-serializable object.
+    ///   questions: List of ``{type, name, instructions, ...}``.
+    ///   model: Optional model id (default ``gpt-6-luna``).
+    #[pyo3(signature = (input, questions, model=None))]
+    fn decisions(
+        &self,
+        py: Python<'_>,
+        input: Bound<'_, PyAny>,
+        questions: Bound<'_, PyAny>,
+        model: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let json_mod = py.import("json")?;
+        let input_json: String = json_mod.call_method1("dumps", (input,))?.extract()?;
+        let questions_json: String = json_mod.call_method1("dumps", (questions,))?.extract()?;
+        let input_value: Value =
+            serde_json::from_str(&input_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let questions_value: Value = serde_json::from_str(&questions_json)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let request = superglue::decisions::request_from_parts(input_value, questions_value, model)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let creds = superglue::chat::credentials_for(&self.options);
+        let response = runtime()
+            .block_on(superglue::decisions::decisions(&self.http, &creds, request))
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let encoded =
+            serde_json::to_string(&response).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let obj = json_mod.call_method1("loads", (encoded.as_str(),))?;
+        Ok(obj.unbind().into_any())
+    }
+
     /// Run a judge config and return the mapped verdict.
     ///
     /// Args:

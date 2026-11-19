@@ -17,6 +17,7 @@ pub mod client;
 pub mod content_quality;
 pub mod context;
 pub mod costing;
+pub mod decisions;
 pub mod embeddings;
 pub mod events;
 pub mod fallback;

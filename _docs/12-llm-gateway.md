@@ -325,6 +325,31 @@ curl -X POST http://localhost:8080/v1/systemone \
 
 Allowlist patterns use `typesafe:jev-latest` or `typesafe:*`. Token usage is recorded. Cost is `$0.00` until a TypeSafe rate exists.
 
+## Decisions (OpenAI)
+
+OpenAI Decisions is an evaluation API, like System One. Use `POST /v1/decisions` with `openai:gpt-6-luna` (or a bare `gpt-6-luna`). A question is a `predicate`, a `choice`, or a `score`. Do not send this body to `/v1/chat/completions` or `/v1/responses`.
+
+```bash
+curl -X POST http://localhost:8080/v1/decisions \
+  -H "X-Superglue-Key: Bearer sgw-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "I was charged twice for the same order.",
+    "model": "openai:gpt-6-luna",
+    "questions": [{
+      "type": "choice",
+      "name": "department",
+      "instructions": "Which department should handle this complaint?",
+      "choices": [
+        {"value": "billing", "description": "Payments and refunds."},
+        {"value": "technical", "description": "Product problems."}
+      ]
+    }]
+  }'
+```
+
+Allowlist patterns use `openai:gpt-6-luna` or `openai:*`. Token usage is recorded. Cost is `$0.00` until an OpenAI Decisions rate exists.
+
 ## API reference
 
 Proxy routes accept a body up to 32 MB.
@@ -342,6 +367,7 @@ Capture routes exist only in a `capture` build.
 | POST | `/v1/audio/transcriptions` | any key | File transcription |
 | POST | `/v1/speech/transcriptions` | any key | Same transcription handler |
 | POST | `/v1/systemone` | any key | TypeSafe System One |
+| POST | `/v1/decisions` | any key | OpenAI Decisions |
 | GET | `/v1/models` | any key | Allowed models from the cache |
 | POST | `/v1/models/refresh` | master | Fetch upstream model lists now |
 | POST, GET | `/v1/keys` | master | Create or list virtual keys |

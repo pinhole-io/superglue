@@ -628,6 +628,70 @@ pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientSys
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientDecisions(
+    mut env: JNIEnv,
+    _cl: JClass,
+    handle: jlong,
+    input_json: JString,
+    questions_json: JString,
+    model: JString,
+) -> jstring {
+    let state = match get_client(handle as u64) {
+        Ok(s) => s,
+        Err(e) => {
+            jthrow(&mut env, &e);
+            return std::ptr::null_mut();
+        }
+    };
+    let input_raw = jstring_to_rust(&mut env, &input_json).unwrap_or_else(|_| "\"\"".to_string());
+    let questions_raw =
+        jstring_to_rust(&mut env, &questions_json).unwrap_or_else(|_| "[]".to_string());
+    let model = opt_request_id(&mut env, &model);
+    let input_value: Value = match serde_json::from_str(&input_raw) {
+        Ok(v) => v,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let questions_value: Value = match serde_json::from_str(&questions_raw) {
+        Ok(v) => v,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let request =
+        match superglue::decisions::request_from_parts(input_value, questions_value, model) {
+            Ok(request) => request,
+            Err(e) => {
+                jthrow(&mut env, &e.to_string());
+                return std::ptr::null_mut();
+            }
+        };
+    let creds = superglue::chat::credentials_for(&state.options);
+    let response = match runtime().block_on(superglue::decisions::decisions(
+        &state.http,
+        &creds,
+        request,
+    )) {
+        Ok(response) => response,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let encoded = match serde_json::to_string(&response) {
+        Ok(s) => s,
+        Err(e) => {
+            jthrow(&mut env, &e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    jstr_from_str(&mut env, &encoded)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_com_superglue_kt_SuperglueNativeJni_clientJudge(
     mut env: JNIEnv,
     _cl: JClass,

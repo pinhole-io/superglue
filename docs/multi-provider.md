@@ -83,6 +83,16 @@ Do not send `typesafe:...` to `/v1/chat/completions` or `/v1/responses`.
 
 Rust example: `cargo run --example 37_systemone`.
 
+## Decisions
+
+OpenAI Decisions is an evaluation API.
+It answers a predicate, a choice, or a score.
+Call `Client::decisions` or gateway `POST /v1/decisions`.
+Use `openai:gpt-6-luna` or a bare `gpt-6-luna` on that route.
+The key is `OPENAI_API_KEY`.
+
+Rust example: `cargo run --example 45_decisions`.
+
 ## Judge
 
 A judge config names the questions and the values the application receives.

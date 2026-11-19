@@ -151,6 +151,12 @@ impl ProviderId {
         matches!(self, ProviderId::TypeSafe)
     }
 
+    /// Whether the provider implements the OpenAI Decisions API.
+    #[must_use]
+    pub fn uses_decisions(self) -> bool {
+        matches!(self, ProviderId::OpenAi)
+    }
+
     /// Whether the provider implements chat completions or Responses.
     #[must_use]
     pub fn supports_chat(self) -> bool {
@@ -267,10 +273,12 @@ mod tests {
         assert!(!ProviderId::TypeSafe.uses_openai_compat());
         assert!(!ProviderId::TypeSafe.uses_responses_api());
         assert!(ProviderId::TypeSafe.uses_system_one());
+        assert!(!ProviderId::TypeSafe.uses_decisions());
         assert!(!ProviderId::TypeSafe.supports_chat());
         assert!(ProviderId::OpenAi.supports_chat());
         assert!(ProviderId::Anthropic.supports_chat());
         assert!(!ProviderId::OpenAi.uses_system_one());
+        assert!(ProviderId::OpenAi.uses_decisions());
     }
 
     #[test]

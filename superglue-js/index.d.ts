@@ -54,6 +54,8 @@ export declare class Client {
    */
   voiceConnect(config: Record<string, unknown>, onEvent: ((err: Error | null, arg: VoiceEventJs) => void)): Promise<VoiceSession>
   systemOne(state: unknown, questions: Record<string, unknown>, model?: string | undefined | null): Promise<any>
+  /** Evaluate `input` with the OpenAI Decisions API. A question type is `predicate`, `choice`, or `score`. */
+  decisions(input: unknown, questions: Array<Record<string, unknown>>, model?: string | undefined | null): Promise<any>
   /** Run a judge config and return the mapped verdict. */
   judge(config: Record<string, unknown>, state: unknown, items?: Array<Record<string, unknown>> | undefined | null): Promise<any>
   /** Run a graph spec and return the JSON value at the output path. */

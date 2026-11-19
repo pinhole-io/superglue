@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod audio;
 pub mod completions;
+pub mod decisions;
 pub mod embeddings;
 pub mod health;
 pub mod proxy_providers;
@@ -44,6 +45,7 @@ pub fn router(state: Arc<GatewayState>) -> Router {
         .route("/v1/audio/transcriptions", post(audio::transcribe))
         .route("/v1/speech/transcriptions", post(audio::transcribe))
         .route("/v1/systemone", post(systemone::evaluate))
+        .route("/v1/decisions", post(decisions::evaluate))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

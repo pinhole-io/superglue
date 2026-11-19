@@ -713,6 +713,20 @@ class Client:
         """
         return self._rust.system_one(state, questions, model=model)
 
+    def decisions(
+        self,
+        input: Any,
+        questions: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate ``input`` with the OpenAI Decisions API.
+
+        ``questions`` is a list of ``{type, name, instructions}``.
+        A question type is ``predicate``, ``choice``, or ``score``.
+        """
+        return self._rust.decisions(input, questions, model=model)
+
     def judge(
         self,
         config: dict[str, Any],

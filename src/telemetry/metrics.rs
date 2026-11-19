@@ -25,6 +25,12 @@ pub const SYSTEM_ONE_TOTAL: &str = "superglue.system_one.total";
 pub const SYSTEM_ONE_ERRORS: &str = "superglue.system_one.errors";
 /// Histogram: wall-clock ms per System One evaluation (labels: model).
 pub const SYSTEM_ONE_DURATION_MS: &str = "superglue.system_one.duration_ms";
+/// Counter: Decisions evaluations started (labels: model).
+pub const DECISIONS_TOTAL: &str = "superglue.decisions.total";
+/// Counter: Decisions evaluations that returned an error (labels: model, error_kind).
+pub const DECISIONS_ERRORS: &str = "superglue.decisions.errors";
+/// Histogram: wall-clock ms per Decisions evaluation (labels: model).
+pub const DECISIONS_DURATION_MS: &str = "superglue.decisions.duration_ms";
 /// Histogram: wall-clock ms per streaming completion (labels: model).
 pub const STREAM_DURATION_MS: &str = "superglue.stream.duration_ms";
 /// Histogram: number of items in a batch_complete call.

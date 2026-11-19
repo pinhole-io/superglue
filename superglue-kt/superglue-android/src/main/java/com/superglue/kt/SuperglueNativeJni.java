@@ -69,6 +69,13 @@ public final class SuperglueNativeJni {
         String model
     );
 
+    public static native String clientDecisions(
+        long handle,
+        String inputJson,
+        String questionsJson,
+        String model
+    );
+
     public static native String clientJudge(
         long handle,
         String configJson,

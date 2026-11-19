@@ -242,6 +242,7 @@ Each tool can use `FailFast`, `Skip`, or `Retry`. One round can dispatch several
 | Voice | Duplex sessions on xAI and OpenAI Realtime when you enable `realtime`. Python, Node.js, and Kotlin open them with `voice_connect` or `voiceConnect`. |
 | Run logs | `MemoryRunStore`, or `JsonlRunStore` on disk. The JSONL store writes each tool round, so a crashed run can resume. |
 | System One | TypeSafe checks through `Client::system_one` and gateway `POST /v1/systemone` |
+| Decisions | OpenAI checks through `Client::decisions` and gateway `POST /v1/decisions` |
 | Transcription | OpenAI, Groq, and xAI file transcription. Gateway paths are under `/v1/audio` and `/v1/speech`. |
 | Observability | `tracing` with redaction. Optional OTLP and Prometheus. |
 | Servers | gRPC sidecar (`grpc`) and an OpenAI-compatible HTTP gateway (`gateway`) |
@@ -288,6 +289,8 @@ The environment loader reads `OPENAI_BASE_URL`, `TYPESAFE_BASE_URL`, and `BEDROC
 A Bedrock model id can contain a colon. The provider prefix is only the first colon. Example: `bedrock:openai.gpt-oss-120b-1:0`. The client sends that key as `Authorization: Bearer`. The base URL has no `/v1` suffix: `https://bedrock-runtime.us-east-1.amazonaws.com/openai`.
 
 TypeSafe (`TYPESAFE_API_KEY`) is the System One evaluation API. It is separate from the chat providers above.
+
+OpenAI Decisions uses the same `OPENAI_API_KEY`. The model id is `gpt-6-luna`. Call `Client::decisions`. A question is a predicate, a choice, or a score.
 
 Embeddings use `provider:embedding:model` when the model must appear in an embedding catalog. Example: `openai:embedding:text-embedding-3-small`. Bedrock text embeddings use the same tag, for example `bedrock:embedding:amazon.titan-embed-text-v2:0`. The gateway catalog loads Bedrock foundation models and inference profiles.
 
@@ -388,6 +391,7 @@ cargo run --example 39_jsonl_resume
 | File transcription | `38_file_transcription` |
 | Resume a crashed run | `39_jsonl_resume` |
 | TypeSafe System One | `37_systemone` |
+| OpenAI Decisions | `45_decisions` |
 
 The full parity table is in [examples/README.md](examples/README.md).
 

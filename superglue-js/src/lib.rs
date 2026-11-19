@@ -970,6 +970,26 @@ impl Client {
         serde_json::to_value(response).map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Evaluate `input` with the OpenAI Decisions API.
+    ///
+    /// `questions` is a list of `{ type, name, instructions }`.
+    /// A question type is `predicate`, `choice`, or `score`.
+    #[napi]
+    pub async fn decisions(
+        &self,
+        #[napi(ts_arg_type = "unknown")] input: Value,
+        #[napi(ts_arg_type = "Array<Record<string, unknown>>")] questions: Value,
+        model: Option<String>,
+    ) -> Result<Value> {
+        let request = superglue::decisions::request_from_parts(input, questions, model)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let creds = superglue::chat::credentials_for(&self.inner.options);
+        let response = superglue::decisions::decisions(&self.inner.http, &creds, request)
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        serde_json::to_value(response).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Run a judge config and return the mapped verdict.
     ///
     /// `config` names the questions, the thresholds, and each output value.

@@ -591,6 +591,14 @@ public class SuperglueClient
             SuperglueNativeJni.clientSystemOne(handle, stateJson, questionsJson, model)
                 ?: throw SuperglueException("systemOne failed")
 
+        public fun decisions(
+            inputJson: String,
+            questionsJson: String,
+            model: String = "",
+        ): String =
+            SuperglueNativeJni.clientDecisions(handle, inputJson, questionsJson, model)
+                ?: throw SuperglueException("decisions failed")
+
         /** Run a judge config and return the mapped verdict JSON. */
         public fun judge(
             configJson: String,
