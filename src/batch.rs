@@ -47,7 +47,7 @@ use crate::chat::{ChatOptions, complete_with_tools};
 use crate::guardrails::GuardrailRegistry;
 use crate::hooks::{HookContext, HookRegistry, HookStage};
 use crate::http::HttpClient;
-use crate::openai::ChatMessage;
+use crate::openai::{ChatMessage, ResponseFormat};
 use crate::proto;
 use crate::tools::ToolRegistry;
 
@@ -92,6 +92,10 @@ pub struct BatchRequest {
     pub prompt: String,
     /// Per-request system prompt. Overrides [`ChatOptions::system_prompt`] when set.
     pub system_prompt: Option<String>,
+    /// When set, these messages replace the text prompt.
+    pub messages: Option<Vec<ChatMessage>>,
+    /// Per-request output schema. Copied onto that item's chat options.
+    pub response_format: Option<ResponseFormat>,
     /// Arbitrary key-value data passed through to [`BatchResult::metadata`].
     pub metadata: HashMap<String, serde_json::Value>,
 }
@@ -103,6 +107,8 @@ impl BatchRequest {
             id: None,
             prompt: prompt.into(),
             system_prompt: None,
+            messages: None,
+            response_format: None,
             metadata: HashMap::new(),
         }
     }
@@ -116,6 +122,18 @@ impl BatchRequest {
     /// Override the system prompt for this request only.
     pub fn with_system_prompt(mut self, sp: impl Into<String>) -> Self {
         self.system_prompt = Some(sp.into());
+        self
+    }
+
+    /// Send these messages instead of the text prompt.
+    pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
+        self.messages = Some(messages);
+        self
+    }
+
+    /// Constrain this item's reply to `format`.
+    pub fn with_response_format(mut self, format: ResponseFormat) -> Self {
+        self.response_format = Some(format);
         self
     }
 }
@@ -324,6 +342,10 @@ pub async fn batch_complete(
         let id = request.id.clone().unwrap_or_else(|| format!("batch-{idx}"));
         let prompt = request.prompt.clone();
         let metadata = request.metadata.clone();
+        let messages = request.messages.clone();
+        if let Some(format) = request.response_format.clone() {
+            opts.response_format = Some(format);
+        }
 
         // Wire the batch item's id as the request_id for correlation.
         opts.request_id = Some(id.clone());
@@ -344,7 +366,7 @@ pub async fn batch_complete(
                 )
                 .await;
 
-            let messages = vec![ChatMessage::text("user", prompt)];
+            let messages = messages.unwrap_or_else(|| vec![ChatMessage::text("user", prompt)]);
             let outcome =
                 complete_with_tools(&http, &registry, &hooks, &guardrails, messages, &opts).await;
 

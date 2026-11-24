@@ -188,18 +188,8 @@ async fn batch_uses_item_id_as_request_id() {
     let opts = opts(server.uri());
 
     let requests = vec![
-        BatchRequest {
-            id: Some("req-alpha".to_string()),
-            prompt: "hello".to_string(),
-            system_prompt: None,
-            metadata: std::collections::HashMap::new(),
-        },
-        BatchRequest {
-            id: Some("req-beta".to_string()),
-            prompt: "world".to_string(),
-            system_prompt: None,
-            metadata: std::collections::HashMap::new(),
-        },
+        BatchRequest::new("hello").with_id("req-alpha"),
+        BatchRequest::new("world").with_id("req-beta"),
     ];
 
     let resp = batch_complete(
