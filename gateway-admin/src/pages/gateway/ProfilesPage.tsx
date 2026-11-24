@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { routeSummary, shortId } from '../../components/compactDisplay'
 import { ChipRow, RowActions } from '../../components/compactUi'
@@ -7,6 +7,7 @@ import { ModelPicker } from '../../components/ModelPicker'
 import { useModelCatalog } from '../../modelCatalog'
 import { PageHeader } from '../../components/PageHeader'
 import { PaginatedTable } from '../../components/PaginatedTable'
+import { navigate } from '../../router'
 import type { GatewayBudget, GatewayProfile, ProfileRouteStep } from '../../types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +29,19 @@ import { errorText } from '@/lib/utils'
 
 const REASONING_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const MAX_ROUTE_STEPS = 16
+const ROUTE_SUGGESTIONS = 20
+
+function routeSuggestions(catalog: readonly string[], query: string): string[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  const matches: string[] = []
+  for (const id of catalog) {
+    if (!id.toLowerCase().includes(q)) continue
+    matches.push(id)
+    if (matches.length === ROUTE_SUGGESTIONS) break
+  }
+  return matches
+}
 
 type RouteDraft = {
   model: string
@@ -44,6 +58,19 @@ type ProfileForm = {
   models: string[]
   useDefault: boolean
   routes: RouteDraft[]
+}
+
+function formFromProfile(profile: GatewayProfile): ProfileForm {
+  return {
+    name: profile.name,
+    description: profile.description ?? '',
+    budget_id: profile.budget_id ?? '',
+    max_reasoning_effort: profile.max_reasoning_effort ?? '',
+    enabled: profile.enabled,
+    models: [...profile.allowed_models],
+    useDefault: false,
+    routes: draftsFromRoutes(profile.routes),
+  }
 }
 
 const emptyForm = (): ProfileForm => ({
@@ -108,6 +135,12 @@ function formReady(form: ProfileForm): boolean {
   return models.length > 0 || form.routes.length > 0
 }
 
+function profileNote(profile: GatewayProfile): string | null {
+  const note = profile.description?.trim() ?? ''
+  if (!note || note === profile.name.trim()) return null
+  return note
+}
+
 export function GatewayProfilesPage() {
   const [profiles, setProfiles] = useState<GatewayProfile[]>([])
   const [budgets, setBudgets] = useState<GatewayBudget[]>([])
@@ -115,8 +148,6 @@ export function GatewayProfilesPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<ProfileForm>(emptyForm)
-  const [editing, setEditing] = useState<GatewayProfile | null>(null)
-  const [editForm, setEditForm] = useState<ProfileForm>(emptyForm)
   const [pendingDelete, setPendingDelete] = useState<GatewayProfile | null>(null)
 
   const load = () => {
@@ -146,39 +177,6 @@ export function GatewayProfilesPage() {
       })
       setShowCreate(false)
       setForm(emptyForm())
-      load()
-    } catch (e) {
-      setError(errorText(e))
-    }
-  }
-
-  const openEdit = (profile: GatewayProfile) => {
-    setEditing(profile)
-    setEditForm({
-      name: profile.name,
-      description: profile.description ?? '',
-      budget_id: profile.budget_id ?? '',
-      max_reasoning_effort: profile.max_reasoning_effort ?? '',
-      enabled: profile.enabled,
-      models: [...profile.allowed_models],
-      useDefault: false,
-      routes: draftsFromRoutes(profile.routes),
-    })
-  }
-
-  const saveEdit = async () => {
-    if (!editing) return
-    try {
-      await api.updateProfile(editing.id, {
-        name: editForm.name.trim(),
-        description: editForm.description.trim() || null,
-        allowed_models: editForm.models,
-        routes: stepsFromDrafts(editForm.routes),
-        budget_id: editForm.budget_id || null,
-        max_reasoning_effort: editForm.max_reasoning_effort || null,
-        enabled: editForm.enabled,
-      })
-      setEditing(null)
       load()
     } catch (e) {
       setError(errorText(e))
@@ -247,13 +245,14 @@ export function GatewayProfilesPage() {
                 </TableRow>
               ) : pageRows.map((p) => {
                 const budget = p.budget_id ? budgetById[p.budget_id] : undefined
+                const note = profileNote(p)
                 return (
                   <TableRow key={p.id}>
                     <TableCell className="whitespace-normal">
                       <div className="grid gap-0.5">
                         <span className="font-medium">{p.name}</span>
-                        {p.description ? (
-                          <span className="text-xs text-muted-foreground">{p.description}</span>
+                        {note ? (
+                          <span className="text-xs text-muted-foreground">{note}</span>
                         ) : null}
                       </div>
                     </TableCell>
@@ -280,7 +279,7 @@ export function GatewayProfilesPage() {
                     </TableCell>
                     <TableCell>
                       <RowActions>
-                        <Button type="button" variant="outline" size="sm" onClick={() => openEdit(p)}>
+                        <Button type="button" variant="outline" size="sm" onClick={() => navigate({ name: 'profile-edit', profileId: p.id })}>
                           Edit
                         </Button>
                         <Button type="button" variant="outline" size="sm" onClick={() => toggleEnabled(p)}>
@@ -310,27 +309,6 @@ export function GatewayProfilesPage() {
               onClick={create}
             >
               Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={editing !== null} onOpenChange={(open) => { if (!open) setEditing(null) }}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Edit profile</DialogTitle></DialogHeader>
-          <ProfileFormFields
-            form={editForm}
-            setForm={setEditForm}
-            budgets={budgets}
-            hideDefaultOption
-          />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button
-              disabled={!formReady({ ...editForm, useDefault: false })}
-              onClick={saveEdit}
-            >
-              Save
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -453,7 +431,17 @@ function RouteEditor({
   routes: RouteDraft[]
   onChange: (routes: RouteDraft[]) => void
 }) {
-  const catalog = useModelCatalog().ids.filter((id) => id.includes(':') && !id.includes('*'))
+  const catalogIds = useModelCatalog().ids
+  const catalog = useMemo(
+    () => catalogIds.filter((id) => id.includes(':') && !id.includes('*')),
+    [catalogIds],
+  )
+  const [focusedStep, setFocusedStep] = useState<number | null>(null)
+  const focusedQuery = focusedStep == null ? '' : (routes[focusedStep]?.model ?? '')
+  const suggestions = useMemo(
+    () => (focusedStep == null ? [] : routeSuggestions(catalog, focusedQuery)),
+    [catalog, focusedQuery, focusedStep],
+  )
   const error = routeError(routes)
   const update = (index: number, patch: Partial<RouteDraft>) => {
     onChange(routes.map((step, stepIndex) => (stepIndex === index ? { ...step, ...patch } : step)))
@@ -482,11 +470,38 @@ function RouteEditor({
             <Label htmlFor={`${idPrefix}-route-model-${index}`}>Step {index + 1} model</Label>
             <Input
               id={`${idPrefix}-route-model-${index}`}
-              list={`${idPrefix}-route-model-catalog`}
               value={step.model}
               placeholder="openai:gpt-4o"
-              onChange={(event) => update(index, { model: event.target.value })}
+              onFocus={() => setFocusedStep(index)}
+              onBlur={() => setFocusedStep((current) => (current === index ? null : current))}
+              onChange={(event) => {
+                setFocusedStep(index)
+                update(index, { model: event.target.value })
+              }}
             />
+            {focusedStep === index && step.model.trim() ? (
+              suggestions.length > 0 ? (
+                <ul className="m-0 grid max-h-40 list-none gap-0.5 overflow-auto rounded-md border bg-card p-1">
+                  {suggestions.map((id) => (
+                    <li key={id}>
+                      <button
+                        type="button"
+                        className="w-full rounded-sm px-2 py-1 text-left font-mono text-xs hover:bg-accent"
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          update(index, { model: id })
+                          setFocusedStep(null)
+                        }}
+                      >
+                        {id}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="m-0 text-xs text-muted-foreground">No models match this search.</p>
+              )
+            ) : null}
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="grid gap-1.5">
@@ -530,9 +545,6 @@ function RouteEditor({
           </div>
         </div>
       ))}
-      <datalist id={`${idPrefix}-route-model-catalog`}>
-        {catalog.map((id) => <option key={id} value={id} />)}
-      </datalist>
       {error ? <p className="m-0 text-xs text-destructive">{error}</p> : null}
       <Button
         type="button"
@@ -543,5 +555,94 @@ function RouteEditor({
         Add step
       </Button>
     </div>
+  )
+}
+
+export function GatewayProfileEditPage({ profileId }: { profileId: string }) {
+  const [profile, setProfile] = useState<GatewayProfile | null>(null)
+  const [budgets, setBudgets] = useState<GatewayBudget[]>([])
+  const [form, setForm] = useState<ProfileForm>(emptyForm)
+  const [missing, setMissing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setProfile(null)
+    setMissing(false)
+    setError(null)
+    Promise.all([api.profiles(), api.budgets()])
+      .then(([profiles, budgetList]) => {
+        if (cancelled) return
+        setBudgets(budgetList.budgets)
+        const found = profiles.profiles.find((item) => item.id === profileId)
+        if (!found) {
+          setMissing(true)
+          return
+        }
+        setProfile(found)
+        setForm(formFromProfile(found))
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(errorText(cause))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profileId])
+
+  const save = async () => {
+    if (!profile) return
+    setSaving(true)
+    setError(null)
+    try {
+      await api.updateProfile(profile.id, {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        allowed_models: form.models,
+        routes: stepsFromDrafts(form.routes),
+        budget_id: form.budget_id || null,
+        max_reasoning_effort: form.max_reasoning_effort || null,
+        enabled: form.enabled,
+      })
+      navigate({ name: 'profiles' })
+    } catch (cause) {
+      setError(errorText(cause))
+      setSaving(false)
+    }
+  }
+
+  const back = (
+    <Button type="button" variant="outline" onClick={() => navigate({ name: 'profiles' })}>
+      Back to profiles
+    </Button>
+  )
+
+  if (missing) {
+    return (
+      <>
+        <PageHeader title="Edit profile" description="This profile is not on the gateway." actions={back} />
+      </>
+    )
+  }
+
+  if (!profile) {
+    return <div className="p-4 text-sm text-muted-foreground">{error ?? 'Loading profile…'}</div>
+  }
+
+  return (
+    <>
+      <PageHeader title="Edit profile" description={profile.name} actions={back} />
+      {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      <div className="grid max-w-3xl gap-3">
+        <ProfileFormFields form={form} setForm={setForm} budgets={budgets} hideDefaultOption />
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => navigate({ name: 'profiles' })}>Cancel</Button>
+          <Button disabled={saving || !formReady({ ...form, useDefault: false })} onClick={() => void save()}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </>
   )
 }

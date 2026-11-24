@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../api'
 import { LinkButton } from '../../components/AppShell'
 import { compactTime, shortId, userLabel } from '../../components/compactDisplay'
@@ -13,7 +13,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { errorText } from '@/lib/utils'
+import { errorText, isAbortError } from '@/lib/utils'
 
 function defaultFrom(): string {
   return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
@@ -37,26 +37,39 @@ export function GatewayCaptureRecordsPage() {
   const [limit, setLimit] = useState(50)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const searchAbort = useRef<AbortController | null>(null)
 
   const load = (append = false, cursor?: string | null) => {
+    searchAbort.current?.abort()
+    const controller = new AbortController()
+    searchAbort.current = controller
     setLoading(true)
     setError(null)
     api
-      .captureRecords({
-        user_id: userId || undefined,
-        request_id: requestId || undefined,
-        model: model || undefined,
-        from: toRfc3339(from),
-        to: toRfc3339(to),
-        limit,
-        cursor: append ? cursor ?? undefined : undefined,
-      })
+      .captureRecords(
+        {
+          user_id: userId || undefined,
+          request_id: requestId || undefined,
+          model: model || undefined,
+          from: toRfc3339(from),
+          to: toRfc3339(to),
+          limit,
+          cursor: append ? cursor ?? undefined : undefined,
+        },
+        controller.signal,
+      )
       .then((res) => {
+        if (controller.signal.aborted) return
         setRecords((prev) => (append ? [...prev, ...res.records] : res.records))
         setNextCursor(res.truncated ? res.next_cursor ?? null : null)
       })
-      .catch((e) => setError(errorText(e)))
-      .finally(() => setLoading(false))
+      .catch((e) => {
+        if (controller.signal.aborted || isAbortError(e)) return
+        setError(errorText(e))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
   }
 
   const loadMore = () => {
@@ -65,9 +78,24 @@ export function GatewayCaptureRecordsPage() {
   }
 
   useEffect(() => {
-    api.users().then((u) => setUsers(u.users)).catch((e) => setError(errorText(e)))
+    let active = true
+    api.users().then((u) => {
+      if (active) setUsers(u.users)
+    }).catch((e) => {
+      if (active) setError(errorText(e))
+    })
     load(false)
+    return () => {
+      active = false
+      searchAbort.current?.abort()
+    }
   }, [])
+
+  const userLabels = useMemo(() => {
+    const labels = new Map<string, string>()
+    for (const user of users) labels.set(user.id, userLabel(user, user.id))
+    return labels
+  }, [users])
 
   return (
     <>
@@ -135,7 +163,7 @@ export function GatewayCaptureRecordsPage() {
               >
                 <TableCell className="font-mono" title={r.ts_start}>{compactTime(r.ts_start)}</TableCell>
                 <TableCell title={r.user_id}>
-                  {userLabel(users.find((user) => user.id === r.user_id), r.user_id)}
+                  {userLabels.get(r.user_id) ?? shortId(r.user_id)}
                 </TableCell>
                 <TableCell title={r.model_resolved ?? r.model_requested}>
                   {r.model_resolved ?? r.model_requested}

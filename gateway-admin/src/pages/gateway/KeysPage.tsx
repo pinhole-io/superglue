@@ -9,6 +9,7 @@ import { ModelPicker } from '../../components/ModelPicker'
 import { PageHeader } from '../../components/PageHeader'
 import { PaginatedTable } from '../../components/PaginatedTable'
 import { classifyModel } from '../../modelFamily'
+import { navigate } from '../../router'
 import type { CreateKeyResponse, GatewayKey, GatewayProfile, GatewayUser } from '../../types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -67,7 +68,6 @@ export function GatewayKeysPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [editing, setEditing] = useState<GatewayKey | null>(null)
   const [plaintextKey, setPlaintextKey] = useState<CreateKeyResponse | null>(null)
   const [pendingRevoke, setPendingRevoke] = useState<GatewayKey | null>(null)
   const [form, setForm] = useState({
@@ -75,11 +75,6 @@ export function GatewayKeysPage() {
     name: '',
     models: [] as string[],
     inheritProfile: true,
-    expires_at: '',
-    max_reasoning_effort: '',
-  })
-  const [editForm, setEditForm] = useState({
-    models: [] as string[],
     expires_at: '',
     max_reasoning_effort: '',
   })
@@ -132,39 +127,6 @@ export function GatewayKeysPage() {
         expires_at: '',
         max_reasoning_effort: '',
       })
-      load()
-    } catch (e) {
-      setError(errorText(e))
-    }
-  }
-
-  const openEdit = (key: GatewayKey) => {
-    const meta = parseMetadata(key.metadata_json)
-    setEditing(key)
-    setEditForm({
-      models: [...key.allowed_models],
-      expires_at: key.expires_at?.slice(0, 16) ?? '',
-      max_reasoning_effort:
-        typeof meta.max_reasoning_effort === 'string' ? meta.max_reasoning_effort : '',
-    })
-  }
-
-  const saveEdit = async () => {
-    if (!editing) return
-    try {
-      const existing = parseMetadata(editing.metadata_json)
-      const metadata = { ...existing }
-      if (editForm.max_reasoning_effort) {
-        metadata.max_reasoning_effort = editForm.max_reasoning_effort
-      } else {
-        delete metadata.max_reasoning_effort
-      }
-      await api.updateKey(editing.id, {
-        allowed_models: editForm.models,
-        expires_at: editForm.expires_at ? new Date(editForm.expires_at).toISOString() : null,
-        metadata,
-      })
-      setEditing(null)
       load()
     } catch (e) {
       setError(errorText(e))
@@ -289,7 +251,7 @@ export function GatewayKeysPage() {
                     <TableCell><ChipRow items={k.allowed_models} /></TableCell>
                     <TableCell>
                       <RowActions>
-                        <Button type="button" variant="outline" size="sm" onClick={() => openEdit(k)}>Edit</Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => navigate({ name: 'key-edit', keyId: k.id })}>Edit</Button>
                         {hasProfile ? (
                           <Button type="button" variant="outline" size="sm" onClick={() => applyProfileDefaults(k)}>
                             Apply profile defaults
@@ -414,55 +376,6 @@ export function GatewayKeysPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editing !== null} onOpenChange={(open) => { if (!open) setEditing(null) }}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Edit key {editing?.key_prefix}</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="gateway-key-edit-expires">Expires (clear to remove)</Label>
-              <Input
-                id="gateway-key-edit-expires"
-                type="datetime-local"
-                value={editForm.expires_at}
-                onChange={(e) => setEditForm({ ...editForm, expires_at: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="gateway-key-edit-reasoning" className="inline-flex items-center gap-1">
-                Max reasoning effort
-                <InfoTip label="Reasoning cap">
-                  Caps reasoning_effort on System 2 chat calls for this key.
-                </InfoTip>
-              </Label>
-              <Select
-                value={editForm.max_reasoning_effort || 'unset'}
-                onValueChange={(value) =>
-                  setEditForm({ ...editForm, max_reasoning_effort: value === 'unset' ? '' : value })
-                }
-              >
-                <SelectTrigger id="gateway-key-edit-reasoning"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unset">No cap</SelectItem>
-                  {REASONING_LEVELS.map((level) => (
-                    <SelectItem key={level} value={level}>{level}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <ModelPicker
-              selected={editForm.models}
-              useDefault={false}
-              hideDefaultOption
-              onChange={(models) => setEditForm({ ...editForm, models })}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button disabled={editForm.models.length === 0} onClick={saveEdit}>Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={plaintextKey !== null} onOpenChange={(open) => { if (!open) setPlaintextKey(null) }}>
         <DialogContent>
           <DialogHeader>
@@ -506,6 +419,137 @@ export function GatewayKeysPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </>
+  )
+}
+
+export function GatewayKeyEditPage({ keyId }: { keyId: string }) {
+  const [key, setKey] = useState<GatewayKey | null>(null)
+  const [missing, setMissing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    models: [] as string[],
+    expires_at: '',
+    max_reasoning_effort: '',
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    setKey(null)
+    setMissing(false)
+    setError(null)
+    api
+      .keys()
+      .then((result) => {
+        if (cancelled) return
+        const found = result.keys.find((item) => item.id === keyId)
+        if (!found) {
+          setMissing(true)
+          return
+        }
+        const meta = parseMetadata(found.metadata_json)
+        setKey(found)
+        setForm({
+          models: [...found.allowed_models],
+          expires_at: found.expires_at?.slice(0, 16) ?? '',
+          max_reasoning_effort: typeof meta.max_reasoning_effort === 'string' ? meta.max_reasoning_effort : '',
+        })
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(errorText(cause))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [keyId])
+
+  const save = async () => {
+    if (!key) return
+    setSaving(true)
+    setError(null)
+    try {
+      const existing = parseMetadata(key.metadata_json)
+      const metadata = { ...existing }
+      if (form.max_reasoning_effort) metadata.max_reasoning_effort = form.max_reasoning_effort
+      else delete metadata.max_reasoning_effort
+      await api.updateKey(key.id, {
+        allowed_models: form.models,
+        expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
+        metadata,
+      })
+      navigate({ name: 'keys' })
+    } catch (cause) {
+      setError(errorText(cause))
+      setSaving(false)
+    }
+  }
+
+  if (missing) {
+    return (
+      <>
+        <PageHeader
+          title="Edit key"
+          description="This key is not on the gateway."
+          actions={<Button type="button" variant="outline" onClick={() => navigate({ name: 'keys' })}>Back to keys</Button>}
+        />
+      </>
+    )
+  }
+
+  if (!key) {
+    return <div className="p-4 text-sm text-muted-foreground">{error ?? 'Loading key…'}</div>
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Edit key"
+        description={key.key_prefix}
+        actions={<Button type="button" variant="outline" onClick={() => navigate({ name: 'keys' })}>Back to keys</Button>}
+      />
+      {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      <div className="grid max-w-3xl gap-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor="gateway-key-edit-expires">Expires (clear to remove)</Label>
+          <Input
+            id="gateway-key-edit-expires"
+            type="datetime-local"
+            value={form.expires_at}
+            onChange={(event) => setForm({ ...form, expires_at: event.target.value })}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="gateway-key-edit-reasoning" className="inline-flex items-center gap-1">
+            Max reasoning effort
+            <InfoTip label="Reasoning cap">
+              Caps reasoning_effort on System 2 chat calls for this key.
+            </InfoTip>
+          </Label>
+          <Select
+            value={form.max_reasoning_effort || 'unset'}
+            onValueChange={(value) => setForm({ ...form, max_reasoning_effort: value === 'unset' ? '' : value })}
+          >
+            <SelectTrigger id="gateway-key-edit-reasoning"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unset">No cap</SelectItem>
+              {REASONING_LEVELS.map((level) => (
+                <SelectItem key={level} value={level}>{level}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <ModelPicker
+          selected={form.models}
+          useDefault={false}
+          hideDefaultOption
+          onChange={(models) => setForm({ ...form, models })}
+        />
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => navigate({ name: 'keys' })}>Cancel</Button>
+          <Button disabled={saving || form.models.length === 0} onClick={() => void save()}>Save</Button>
+        </div>
+      </div>
     </>
   )
 }

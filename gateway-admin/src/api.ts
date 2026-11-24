@@ -182,15 +182,20 @@ export const api = {
       method: 'DELETE',
     }),
   captureStatus: () => request<CaptureStatus>('/v1/capture/status'),
-  captureRecords: (params: {
-    user_id?: string
-    request_id?: string
-    model?: string
-    from?: string
-    to?: string
-    limit?: number
-    cursor?: string
-  }) => request<CaptureRecordsList>(`/v1/capture/records${query(params)}`),
-  captureRecord: (requestId: string, params?: { from?: string; to?: string }) =>
-    request<CaptureRecordDetail>(`/v1/capture/records/${encodeURIComponent(requestId)}${query(params ?? {})}`),
+  captureRecords: (
+    params: {
+      user_id?: string
+      request_id?: string
+      model?: string
+      from?: string
+      to?: string
+      limit?: number
+      cursor?: string
+    },
+    signal?: AbortSignal,
+  ) => request<CaptureRecordsList>(`/v1/capture/records${query(params)}`, { signal }),
+  captureRecord: (requestId: string, params?: { from?: string; to?: string }, signal?: AbortSignal) =>
+    request<CaptureRecordDetail>(`/v1/capture/records/${encodeURIComponent(requestId)}${query(params ?? {})}`, {
+      signal,
+    }),
 }

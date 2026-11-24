@@ -1,15 +1,14 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, clearMasterKey, getMasterKey, setMasterKey } from './api'
-import { startModelCatalog } from './modelCatalog'
 import { AppShell } from './components/AppShell'
 import { GatewayBudgetsPage } from './pages/gateway/BudgetsPage'
 import { GatewayCapturePage } from './pages/gateway/CapturePage'
 import { GatewayCaptureRecordDetailPage } from './pages/gateway/CaptureRecordDetailPage'
 import { GatewayCaptureRecordsPage } from './pages/gateway/CaptureRecordsPage'
-import { GatewayKeysPage } from './pages/gateway/KeysPage'
+import { GatewayKeyEditPage, GatewayKeysPage } from './pages/gateway/KeysPage'
 import { GatewayOverviewPage } from './pages/gateway/OverviewPage'
-import { GatewayProfilesPage } from './pages/gateway/ProfilesPage'
+import { GatewayProfileEditPage, GatewayProfilesPage } from './pages/gateway/ProfilesPage'
 import { GatewayProvidersPage } from './pages/gateway/ProvidersPage'
 import { GatewayUsagePage } from './pages/gateway/UsagePage'
 import { GatewayUsersPage } from './pages/gateway/UsersPage'
@@ -111,11 +110,17 @@ function AdminApp({ onLogout }: { onLogout: () => void }) {
     case 'keys':
       page = <GatewayKeysPage />
       break
+    case 'key-edit':
+      page = <GatewayKeyEditPage keyId={route.keyId} />
+      break
     case 'budgets':
       page = <GatewayBudgetsPage />
       break
     case 'profiles':
       page = <GatewayProfilesPage />
+      break
+    case 'profile-edit':
+      page = <GatewayProfileEditPage profileId={route.profileId} />
       break
     case 'usage':
       page = <GatewayUsagePage />
@@ -147,8 +152,6 @@ function AdminApp({ onLogout }: { onLogout: () => void }) {
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [boot, setBoot] = useState<BootState>('loading')
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => startModelCatalog(), [])
 
   useEffect(() => {
     let cancelled = false

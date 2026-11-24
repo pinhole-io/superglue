@@ -21,15 +21,51 @@ const empty: ModelCatalogState = {
 let state: ModelCatalogState = empty
 const listeners = new Set<() => void>()
 let tail: Promise<void> = Promise.resolve()
+let queuedReads = 0
+let subscriberTimer: number | null = null
+let armGeneration = 0
 
 function publish(next: ModelCatalogState) {
   state = next
   for (const listener of listeners) listener()
 }
 
+function catalogReady(): boolean {
+  return state.ids.length > 0 || state.refreshedAt !== null
+}
+
+function armCatalog() {
+  armGeneration += 1
+  const generation = armGeneration
+  if (subscriberTimer === null) {
+    subscriberTimer = window.setInterval(() => {
+      void enqueue(false)
+    }, HOUR_MS)
+  }
+  queueMicrotask(() => {
+    if (generation !== armGeneration) return
+    if (listeners.size === 0) return
+    if (state.refreshing || queuedReads > 0 || catalogReady()) return
+    void enqueue(false)
+  })
+}
+
+function disarmCatalog() {
+  armGeneration += 1
+  if (subscriberTimer !== null) {
+    window.clearInterval(subscriberTimer)
+    subscriberTimer = null
+  }
+}
+
 function subscribe(listener: () => void): () => void {
+  const first = listeners.size === 0
   listeners.add(listener)
-  return () => listeners.delete(listener)
+  if (first) armCatalog()
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) disarmCatalog()
+  }
 }
 
 function snapshot(): ModelCatalogState {
@@ -60,21 +96,18 @@ async function read(refresh: boolean): Promise<void> {
 }
 
 function enqueue(refresh: boolean): Promise<void> {
+  if (!refresh && queuedReads > 0) return tail
+  queuedReads += 1
   const run = tail.then(() => read(refresh))
   tail = run.then(
-    () => undefined,
-    () => undefined,
+    () => {
+      queuedReads -= 1
+    },
+    () => {
+      queuedReads -= 1
+    },
   )
   return run
-}
-
-/** Load the cached catalog, then re-read it every hour. */
-export function startModelCatalog(): () => void {
-  const timer = window.setInterval(() => {
-    void enqueue(false)
-  }, HOUR_MS)
-  void enqueue(false)
-  return () => window.clearInterval(timer)
 }
 
 export function refreshModelCatalog(): Promise<void> {

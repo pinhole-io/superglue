@@ -6,8 +6,10 @@ export type Route =
   | { name: 'overview' }
   | { name: 'users' }
   | { name: 'keys' }
+  | { name: 'key-edit'; keyId: string }
   | { name: 'budgets' }
   | { name: 'profiles' }
+  | { name: 'profile-edit'; profileId: string }
   | { name: 'usage' }
   | { name: 'providers' }
   | { name: 'capture' }
@@ -21,8 +23,12 @@ export function parsePath(pathname: string): Route {
   if (!path || path === 'overview') return { name: 'overview' }
   if (path === 'users') return { name: 'users' }
   if (path === 'keys') return { name: 'keys' }
+  const keyEdit = path.match(/^keys\/([^/]+)$/)
+  if (keyEdit) return { name: 'key-edit', keyId: decodeURIComponent(keyEdit[1]) }
   if (path === 'budgets') return { name: 'budgets' }
   if (path === 'profiles') return { name: 'profiles' }
+  const profileEdit = path.match(/^profiles\/([^/]+)$/)
+  if (profileEdit) return { name: 'profile-edit', profileId: decodeURIComponent(profileEdit[1]) }
   if (path === 'usage') return { name: 'usage' }
   if (path === 'providers') return { name: 'providers' }
   if (path === 'capture') return { name: 'capture' }
@@ -41,10 +47,14 @@ export function pathFor(route: Route): string {
       return `${BASE}/users`
     case 'keys':
       return `${BASE}/keys`
+    case 'key-edit':
+      return `${BASE}/keys/${encodeURIComponent(route.keyId)}`
     case 'budgets':
       return `${BASE}/budgets`
     case 'profiles':
       return `${BASE}/profiles`
+    case 'profile-edit':
+      return `${BASE}/profiles/${encodeURIComponent(route.profileId)}`
     case 'usage':
       return `${BASE}/usage`
     case 'providers':

@@ -9,3 +9,7 @@ export function errorText(cause: unknown): string {
   if (cause instanceof Error && cause.message) return cause.message
   return String(cause)
 }
+
+export function isAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === 'AbortError'
+}

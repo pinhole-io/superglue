@@ -51,7 +51,7 @@ const NAV: NavGroup[] = [
         label: 'Keys',
         route: { name: 'keys' },
         icon: <KeyRound />,
-        match: (route) => route.name === 'keys',
+        match: (route) => route.name === 'keys' || route.name === 'key-edit',
       },
       {
         label: 'Budgets',
@@ -63,7 +63,7 @@ const NAV: NavGroup[] = [
         label: 'Profiles',
         route: { name: 'profiles' },
         icon: <IdCard />,
-        match: (route) => route.name === 'profiles',
+        match: (route) => route.name === 'profiles' || route.name === 'profile-edit',
       },
     ],
   },

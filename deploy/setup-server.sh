@@ -12,7 +12,8 @@ SUPERGLUE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MONOREPO_ROOT="$(cd "${SUPERGLUE_DIR}/../.." && pwd)"
 
 REMOTE="${SUPERGLUE_DEPLOY_REMOTE:-}"
-LOCAL_BINARY=""
+# just sets this after it builds the admin UI and the binary.
+LOCAL_BINARY="${SUPERGLUE_LOCAL_BINARY:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --local-binary)

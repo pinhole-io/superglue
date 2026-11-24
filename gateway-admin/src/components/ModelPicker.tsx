@@ -48,6 +48,102 @@ function SectionHeading({
   )
 }
 
+const MODEL_WINDOW = 40
+
+function modelWindow(ids: string[], query: string, selected: readonly string[]) {
+  const selectedSet = new Set(selected)
+  const pinned = ids.filter((id) => selectedSet.has(id))
+  const q = query.trim().toLowerCase()
+  if (!q) {
+    return { rows: pinned, matchCount: ids.length, shownMatches: pinned.length, searching: false }
+  }
+  const matches: string[] = []
+  for (const id of ids) {
+    if (id.toLowerCase().includes(q)) matches.push(id)
+  }
+  const extra: string[] = []
+  for (const id of matches) {
+    if (selectedSet.has(id)) continue
+    extra.push(id)
+    if (extra.length === MODEL_WINDOW) break
+  }
+  const seen = new Set<string>()
+  const rows: string[] = []
+  let shownMatches = 0
+  for (const id of pinned) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    rows.push(id)
+    if (id.toLowerCase().includes(q)) shownMatches += 1
+  }
+  for (const id of extra) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    rows.push(id)
+    shownMatches += 1
+  }
+  return { rows, matchCount: matches.length, shownMatches, searching: true }
+}
+
+function CatalogStatusLine() {
+  const catalogState = useModelCatalog()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return <p className={catalogState.error ? 'error' : 'muted'}>{catalogStatus(catalogState, now)}</p>
+}
+
+function ModelChoices({
+  ids,
+  query,
+  placeholder,
+  selected,
+  onQuery,
+  onToggle,
+}: {
+  ids: string[]
+  query: string
+  placeholder: string
+  selected: readonly string[]
+  onQuery: (value: string) => void
+  onToggle: (id: string, on: boolean) => void
+}) {
+  if (ids.length === 0) return null
+  const view = modelWindow(ids, query, selected)
+  const noun = view.matchCount === 1 ? 'model' : 'models'
+  const countLabel = !view.searching
+    ? `${view.matchCount} ${noun}. Search to choose one.`
+    : view.matchCount === 0
+      ? 'No models match this search.'
+      : `${view.shownMatches} of ${view.matchCount}`
+  return (
+    <>
+      <Input
+        type="search"
+        placeholder={placeholder}
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+      />
+      <p className="muted">{countLabel}</p>
+      {view.rows.length > 0 ? (
+        <div className="model-grid">
+          {view.rows.map((id) => (
+            <CheckRow
+              key={id}
+              id={`model-${id}`}
+              label={id}
+              checked={selected.includes(id)}
+              onChange={(on) => onToggle(id, on)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 function CheckRow({
   id,
   label,
@@ -90,14 +186,10 @@ export function ModelPicker({
   const catalogState = useModelCatalog()
   const catalog = catalogState.ids
   const catalogReady = catalogState.refreshedAt !== null || catalog.length > 0 || catalogState.error !== null
-  const [now, setNow] = useState(() => Date.now())
   const [searchByProvider, setSearchByProvider] = useState<Record<string, string>>({})
+  const [system1Query, setSystem1Query] = useState('')
+  const [embeddingQuery, setEmbeddingQuery] = useState('')
   const [embeddingDraft, setEmbeddingDraft] = useState({ provider: 'openai' as EmbeddingProvider, model: '' })
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
-    return () => window.clearInterval(timer)
-  }, [])
 
   const effective = useDefault && !hideDefaultOption ? [...DEFAULT_SYSTEM2_MODELS] : selected
   const otherPatterns = useMemo(
@@ -105,7 +197,10 @@ export function ModelPicker({
     [effective],
   )
 
-  const system1Catalog = catalog.filter((id) => classifyModel(id) === 'system1')
+  const system1Catalog = useMemo(
+    () => catalog.filter((id) => classifyModel(id) === 'system1' && !id.endsWith(':*')),
+    [catalog],
+  )
   const system2ByProvider = useMemo(() => {
     const map = Object.fromEntries(SYSTEM2_PROVIDERS.map((p) => [p, [] as string[]])) as Record<
       System2Provider,
@@ -121,7 +216,10 @@ export function ModelPicker({
     return map
   }, [catalog])
 
-  const embeddingCatalog = catalog.filter((id) => classifyModel(id) === 'embeddings')
+  const embeddingCatalog = useMemo(
+    () => catalog.filter((id) => classifyModel(id) === 'embeddings' && !id.endsWith(':*')),
+    [catalog],
+  )
 
   const setSelected = (next: string[]) => onChange(next, false)
 
@@ -136,7 +234,7 @@ export function ModelPicker({
   return (
     <div className="model-picker">
       <div className="model-catalog-bar">
-        <p className={catalogState.error ? 'error' : 'muted'}>{catalogStatus(catalogState, now)}</p>
+        <CatalogStatusLine />
         <Button
           type="button"
           variant="outline"
@@ -176,25 +274,28 @@ export function ModelPicker({
             ) : system1Catalog.length === 0 && !effective.some((id) => classifyModel(id) === 'system1') ? (
               <p className="muted">No TypeSafe models in the catalog. Configure TYPESAFE_API_KEY on the gateway.</p>
             ) : (
-              <div className="model-grid">
-                <CheckRow
-                  id="model-typesafe-star"
-                  label="typesafe:*"
-                  checked={effective.includes('typesafe:*')}
-                  tip="All TypeSafe System 1 models."
-                  tipLabel="typesafe wildcard"
-                  onChange={(on) => setSelected(toggle(effective, 'typesafe:*', on))}
-                />
-                {system1Catalog.map((id) => (
+              <>
+              <>
+                <div className="model-grid">
                   <CheckRow
-                    key={id}
-                    id={`model-${id}`}
-                    label={id}
-                    checked={effective.includes(id)}
-                    onChange={(on) => setSelected(toggle(effective, id, on))}
+                    id="model-typesafe-star"
+                    label="typesafe:*"
+                    checked={effective.includes('typesafe:*')}
+                    tip="All TypeSafe System 1 models."
+                    tipLabel="typesafe wildcard"
+                    onChange={(on) => setSelected(toggle(effective, 'typesafe:*', on))}
                   />
-                ))}
-              </div>
+                </div>
+                <ModelChoices
+                  ids={system1Catalog}
+                  query={system1Query}
+                  placeholder="Search System 1 models…"
+                  selected={effective}
+                  onQuery={setSystem1Query}
+                  onToggle={(id, on) => setSelected(toggle(effective, id, on))}
+                />
+              </>
+              </>
             )}
           </section>
 
@@ -209,10 +310,6 @@ export function ModelPicker({
               {SYSTEM2_PROVIDERS.map((provider) => {
                 const wildcard = system2Wildcard(provider)
                 const models = system2ByProvider[provider]
-                const query = (searchByProvider[provider] ?? '').trim().toLowerCase()
-                const filtered = query
-                  ? models.filter((id) => id.toLowerCase().includes(query))
-                  : models
                 return (
                   <div className="provider-block" key={provider}>
                     <div className="provider-block-header">
@@ -226,36 +323,19 @@ export function ModelPicker({
                         onChange={(on) => setSelected(toggle(effective, wildcard, on))}
                       />
                     </div>
-                    {models.length > 0 && (
-                      <>
-                        <Input
-                          type="search"
-                          placeholder={`Search ${providerLabel(provider)} models…`}
-                          value={searchByProvider[provider] ?? ''}
-                          onChange={(event) =>
-                            setSearchByProvider((current) => ({
-                              ...current,
-                              [provider]: event.target.value,
-                            }))
-                          }
-                        />
-                        <div className="model-grid">
-                          {filtered.length === 0 ? (
-                            <span className="muted">No models match this search.</span>
-                          ) : (
-                            filtered.map((id) => (
-                              <CheckRow
-                                key={id}
-                                id={`model-${id}`}
-                                label={id}
-                                checked={effective.includes(id)}
-                                onChange={(on) => setSelected(toggle(effective, id, on))}
-                              />
-                            ))
-                          )}
-                        </div>
-                      </>
-                    )}
+                    <ModelChoices
+                      ids={models}
+                      query={searchByProvider[provider] ?? ''}
+                      placeholder={`Search ${providerLabel(provider)} models…`}
+                      selected={effective}
+                      onQuery={(value) =>
+                        setSearchByProvider((current) => ({
+                          ...current,
+                          [provider]: value,
+                        }))
+                      }
+                      onToggle={(id, on) => setSelected(toggle(effective, id, on))}
+                    />
                   </div>
                 )
               })}
@@ -284,16 +364,15 @@ export function ModelPicker({
                   />
                 )
               })}
-              {embeddingCatalog.map((id) => (
-                <CheckRow
-                  key={id}
-                  id={`model-${id}`}
-                  label={id}
-                  checked={effective.includes(id)}
-                  onChange={(on) => setSelected(toggle(effective, id, on))}
-                />
-              ))}
             </div>
+            <ModelChoices
+              ids={embeddingCatalog}
+              query={embeddingQuery}
+              placeholder="Search embedding models…"
+              selected={effective}
+              onQuery={setEmbeddingQuery}
+              onToggle={(id, on) => setSelected(toggle(effective, id, on))}
+            />
             <div className="embedding-add">
               <Label htmlFor="embedding-provider">Add tagged embedding model</Label>
               <div className="embedding-add-row">

@@ -1,60 +1,82 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { LinkButton } from '../../components/AppShell'
-import { compactTime, keyLabel, shortId, userLabel } from '../../components/compactDisplay'
+import { compactTime, shortId } from '../../components/compactDisplay'
 import { FamilyBadge } from '../../components/FamilyBadge'
 import { PageHeader } from '../../components/PageHeader'
-import type { CaptureRecordDetail, GatewayKey, GatewayUser } from '../../types'
+import type { CaptureRecordDetail } from '../../types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
-import { errorText } from '@/lib/utils'
+import { errorText, isAbortError } from '@/lib/utils'
+
+const JSON_PREVIEW_CHARS = 64 * 1024
+const SSE_PAGE = 50
+
+function textSize(chars: number): string {
+  if (chars < 1024) return `${chars} B`
+  const kib = chars / 1024
+  if (kib < 1024) return `${kib.toFixed(1)} KiB`
+  return `${(kib / 1024).toFixed(1)} MiB`
+}
 
 function JsonBlock({ title, value }: { title: string; value: unknown }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
+  const cache = useRef<{ value: unknown; full: string } | null>(null)
   if (value == null) return null
+  let preview: { text: string; truncated: boolean; fullChars: number } | null = null
+  if (open) {
+    if (cache.current?.value !== value) {
+      cache.current = { value, full: JSON.stringify(value, null, 2) }
+    }
+    const full = cache.current.full
+    preview = full.length <= JSON_PREVIEW_CHARS
+      ? { text: full, truncated: false, fullChars: full.length }
+      : { text: full.slice(0, JSON_PREVIEW_CHARS), truncated: true, fullChars: full.length }
+  }
   return (
     <Card>
       <CardHeader className="pb-2">
-        <Button type="button" variant="ghost" className="w-fit" onClick={() => setOpen((v) => !v)}>
+        <Button type="button" variant="ghost" className="w-fit" onClick={() => setOpen((current) => !current)}>
           {open ? '▼' : '▶'} {title}
         </Button>
       </CardHeader>
-      {open && (
+      {preview ? (
         <CardContent>
+          {preview.truncated ? (
+            <p className="muted">Showing the first 64 KiB of {textSize(preview.fullChars)}.</p>
+          ) : null}
           <pre className="m-0 max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
-            {JSON.stringify(value, null, 2)}
+            {preview.text}
           </pre>
         </CardContent>
-      )}
+      ) : null}
     </Card>
   )
 }
 
 export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: string } = {}) {
   const [detail, setDetail] = useState<CaptureRecordDetail | null>(null)
-  const [users, setUsers] = useState<GatewayUser[]>([])
-  const [keys, setKeys] = useState<GatewayKey[]>([])
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    Promise.all([api.users(), api.keys()])
-      .then(([u, k]) => {
-        setUsers(u.users)
-        setKeys(k.keys)
-      })
-      .catch(() => {
-        setUsers([])
-        setKeys([])
-      })
-  }, [])
+  const [sseShown, setSseShown] = useState(SSE_PAGE)
 
   useEffect(() => {
     if (!requestId) return
+    const controller = new AbortController()
     setError(null)
     setDetail(null)
-    api.captureRecord(requestId).then(setDetail).catch((e) => setError(errorText(e)))
+    setSseShown(SSE_PAGE)
+    api
+      .captureRecord(requestId, undefined, controller.signal)
+      .then((next) => {
+        if (!controller.signal.aborted) setDetail(next)
+      })
+      .catch((cause) => {
+        if (controller.signal.aborted || isAbortError(cause)) return
+        setError(errorText(cause))
+      })
+    return () => controller.abort()
   }, [requestId])
 
   if (!requestId) {
@@ -77,9 +99,9 @@ export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: stri
   }
 
   const { record } = detail
-  const user = users.find((item) => item.id === record.user_id)
-  const key = record.key_id ? keys.find((item) => item.id === record.key_id) : undefined
   const model = record.model_resolved ?? record.model_requested
+  const sseRows = record.sse.slice(0, sseShown)
+  const sseRemaining = record.sse.length - sseRows.length
 
   return (
     <>
@@ -90,7 +112,7 @@ export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: stri
       />
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <Summary label="Request ID" value={shortId(record.request_id)} mono />
-        <Summary label="User" value={userLabel(user, record.user_id)} />
+        <Summary label="User" value={shortId(record.user_id)} />
         <Summary label="Model" value={model} />
         <Summary label="Duration" value={`${record.duration_ms}ms`} />
         <Summary label="Cost" value={record.cost_usd != null ? `$${record.cost_usd.toFixed(4)}` : '—'} />
@@ -117,7 +139,7 @@ export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: stri
               </TableRow>
               <TableRow>
                 <TableCell className="font-medium">Key</TableCell>
-                <TableCell>{record.key_id ? keyLabel(key, record.key_id) : '—'}</TableCell>
+                <TableCell>{record.key_id ? shortId(record.key_id) : '—'}</TableCell>
               </TableRow>
               <TableRow>
                 <TableCell className="font-medium">Source</TableCell>
@@ -151,7 +173,7 @@ export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: stri
           <CardContent>
             <Table>
               <TableBody>
-                {record.sse.map((event, i) => (
+                {sseRows.map((event, i) => (
                   <TableRow key={i}>
                     <TableCell>{i + 1}</TableCell>
                     <TableCell className="whitespace-pre-wrap font-mono text-xs">{event}</TableCell>
@@ -159,6 +181,16 @@ export function GatewayCaptureRecordDetailPage({ requestId }: { requestId?: stri
                 ))}
               </TableBody>
             </Table>
+            {sseRemaining > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3"
+                onClick={() => setSseShown((shown) => shown + SSE_PAGE)}
+              >
+                Show {Math.min(SSE_PAGE, sseRemaining)} more
+              </Button>
+            ) : null}
           </CardContent>
         </Card>
       )}
