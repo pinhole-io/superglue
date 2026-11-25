@@ -318,7 +318,8 @@ where
             }
         };
         model_used = model_ref.raw.clone();
-        let is_anthropic = model_ref.provider == crate::providers::ProviderId::Anthropic;
+        let is_anthropic = model_ref.provider == crate::providers::ProviderId::Anthropic
+            && !credentials.uses_gateway();
 
         let mut parser = SseParser::new();
         let mut progress = HeartbeatWatch::new(http.config.stream_idle_timeout);

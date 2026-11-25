@@ -460,7 +460,9 @@ mod dispatch_freshness_tests {
     fn chat_rejects_an_embedding_model_reference() {
         let model_ref =
             crate::providers::parse_model_ref("openai:embedding:text-embedding-3-small");
-        let Err(error) = super::resolve_chat_provider(&model_ref) else {
+        let Err(error) =
+            super::resolve_chat_provider(&model_ref, &crate::providers::ProviderCredentials::new())
+        else {
             panic!("embedding model must not resolve as chat");
         };
         assert!(matches!(
@@ -469,5 +471,64 @@ mod dispatch_freshness_tests {
                 crate::providers::ModelCapability::Embedding
             )
         ));
+    }
+
+    #[tokio::test]
+    async fn gateway_streams_anthropic_via_openai_sse_in_tool_loop() {
+        use std::sync::Arc;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        use crate::guardrails::GuardrailRegistry;
+        use crate::hooks::HookRegistry;
+        use crate::http::{ClientConfig, HttpClient};
+        use crate::openai::ChatMessage;
+        use crate::providers::ProviderCredentials;
+        use crate::tools::ToolRegistry;
+
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello from gateway\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer sgw-test"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut creds = ProviderCredentials::new();
+        creds.set_gateway(server.uri(), "sgw-test");
+        let mut options = super::ChatOptions::new("", "", "anthropic:claude-sonnet-4-5");
+        options.provider_credentials = Some(Arc::new(creds));
+
+        let http = HttpClient::new(ClientConfig::default()).expect("http");
+        let tools = ToolRegistry::new();
+        let hooks = HookRegistry::new();
+        let guardrails = GuardrailRegistry::new();
+        let mut chunks = String::new();
+
+        let outcome = super::stream_complete_with_tools(
+            &http,
+            &tools,
+            &hooks,
+            &guardrails,
+            vec![ChatMessage::text("user", "hi")],
+            &options,
+            |delta| chunks.push_str(&delta),
+            |_| {},
+        )
+        .await
+        .expect("gateway anthropic stream");
+
+        assert_eq!(outcome.content, "hello from gateway");
+        assert_eq!(chunks, "hello from gateway");
     }
 }

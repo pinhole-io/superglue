@@ -234,7 +234,7 @@ pub async fn complete_with_tools(
             }
         };
         model_used = model_ref.raw.clone();
-        let provider = resolve_chat_provider(&model_ref)
+        let provider = resolve_chat_provider(&model_ref, &credentials)
             .map_err(|e| fail_partial(e, &messages, injected_prefix))?;
         let normalized = provider.parse_chat_response(&val).map_err(|e| {
             fail_partial(
@@ -568,7 +568,7 @@ pub async fn complete_with_tools(
                         .await
                         .map_err(|e| fail_partial(e, &messages, injected_prefix))?;
                         model_used = model_ref.raw.clone();
-                        let provider = resolve_chat_provider(&model_ref)
+                        let provider = resolve_chat_provider(&model_ref, &credentials)
                             .map_err(|e| fail_partial(e, &messages, injected_prefix))?;
                         let normalized = provider.parse_chat_response(&val).map_err(|e| {
                             fail_partial(

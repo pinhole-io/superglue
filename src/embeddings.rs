@@ -105,7 +105,7 @@ pub async fn embed(
     if !supports_embeddings(model_ref.provider) {
         return Err(EmbedError::UnsupportedProvider(model_ref.provider));
     }
-    if model_ref.provider == ProviderId::Bedrock {
+    if model_ref.provider == ProviderId::Bedrock && !credentials.uses_gateway() {
         return embed_bedrock(http, credentials, &model_ref, &request).await;
     }
 

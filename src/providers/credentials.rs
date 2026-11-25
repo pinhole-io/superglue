@@ -13,10 +13,17 @@ pub enum CredentialsError {
     MissingKey(ProviderId),
 }
 
+#[derive(Debug, Clone)]
+struct GatewayCredentials {
+    base_url: String,
+    api_key: SecretString,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ProviderCredentials {
     keys: HashMap<ProviderId, SecretString>,
     base_urls: HashMap<ProviderId, String>,
+    gateway: Option<GatewayCredentials>,
 }
 
 impl ProviderCredentials {
@@ -39,6 +46,42 @@ impl ProviderCredentials {
 
     pub fn remove_base_url(&mut self, provider: ProviderId) {
         self.base_urls.remove(&provider);
+    }
+
+    /// Route every provider through an OpenAI-compatible SuperGlue gateway.
+    ///
+    /// Gateway routing overrides per-provider keys and base URLs. Chat calls for
+    /// every provider, including Anthropic, use OpenAI-compatible
+    /// `/v1/chat/completions` and `/v1/responses` with `provider:model` on the wire.
+    /// Passing an empty `base_url` or `api_key` clears gateway routing.
+    pub fn set_gateway(&mut self, base_url: impl Into<String>, api_key: impl Into<String>) {
+        let base_url = base_url.into();
+        let trimmed = base_url.trim().trim_end_matches('/');
+        let normalized = trimmed
+            .strip_suffix("/v1")
+            .unwrap_or(trimmed)
+            .trim_end_matches('/')
+            .to_string();
+        let api_key = api_key.into().trim().to_string();
+        if normalized.is_empty() || api_key.is_empty() {
+            self.gateway = None;
+            return;
+        }
+        self.gateway = Some(GatewayCredentials {
+            base_url: normalized,
+            api_key: SecretString::from(api_key),
+        });
+    }
+
+    /// Remove gateway routing so calls use per-provider keys and base URLs.
+    pub fn clear_gateway(&mut self) {
+        self.gateway = None;
+    }
+
+    /// True when calls route through a SuperGlue gateway.
+    #[must_use]
+    pub fn uses_gateway(&self) -> bool {
+        self.gateway.is_some()
     }
 
     /// Load keys from each provider's `env_var_for_key`, plus known aliases.
@@ -107,6 +150,9 @@ impl ProviderCredentials {
     }
 
     pub fn key_for(&self, provider: ProviderId) -> Result<SecretString, CredentialsError> {
+        if let Some(gateway) = &self.gateway {
+            return Ok(gateway.api_key.clone());
+        }
         self.keys
             .get(&provider)
             .cloned()
@@ -115,11 +161,14 @@ impl ProviderCredentials {
 
     #[must_use]
     pub fn has_key(&self, provider: ProviderId) -> bool {
-        self.keys.contains_key(&provider)
+        self.gateway.is_some() || self.keys.contains_key(&provider)
     }
 
     #[must_use]
     pub fn base_url_for(&self, provider: ProviderId) -> String {
+        if let Some(gateway) = &self.gateway {
+            return gateway.base_url.clone();
+        }
         self.base_urls
             .get(&provider)
             .cloned()
@@ -279,5 +328,35 @@ mod tests {
             creds.base_url_for(ProviderId::OpenAi),
             "https://api.openai.com"
         );
+    }
+
+    #[test]
+    fn gateway_overrides_all_providers_and_clears_cleanly() {
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::OpenAi, "sk-direct");
+        creds.insert_base_url(ProviderId::OpenAi, "https://direct.example");
+        creds.set_gateway(" https://gateway.myharn.sh/v1/ ", " sgw-test ");
+
+        assert!(creds.uses_gateway());
+        for provider in ProviderId::ALL {
+            assert!(creds.has_key(provider));
+            assert_eq!(creds.key_for(provider).unwrap().expose_secret(), "sgw-test");
+            assert_eq!(creds.base_url_for(provider), "https://gateway.myharn.sh");
+        }
+
+        creds.clear_gateway();
+        assert!(!creds.uses_gateway());
+        assert_eq!(
+            creds.key_for(ProviderId::OpenAi).unwrap().expose_secret(),
+            "sk-direct"
+        );
+        assert_eq!(
+            creds.base_url_for(ProviderId::OpenAi),
+            "https://direct.example"
+        );
+        assert!(!creds.has_key(ProviderId::Anthropic));
+
+        creds.set_gateway("https://gateway.myharn.sh", "   ");
+        assert!(!creds.uses_gateway());
     }
 }

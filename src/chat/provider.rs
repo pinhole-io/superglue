@@ -196,7 +196,7 @@ pub(crate) async fn provider_chat_post(
             .key_for(model_ref.provider)
             .map_err(ChatError::Credentials)?;
 
-        let provider = resolve_chat_provider(&model_ref)?;
+        let provider = resolve_chat_provider(&model_ref, credentials)?;
         let ctx = crate::providers::ProviderRequestContext {
             model_ref: &model_ref,
             credentials,
@@ -296,7 +296,7 @@ pub(crate) async fn provider_chat_stream(
             .key_for(model_ref.provider)
             .map_err(ChatError::Credentials)?;
 
-        let provider = resolve_chat_provider(&model_ref)?;
+        let provider = resolve_chat_provider(&model_ref, credentials)?;
         let ctx = crate::providers::ProviderRequestContext {
             model_ref: &model_ref,
             credentials,

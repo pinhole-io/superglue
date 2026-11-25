@@ -13,7 +13,7 @@ mod rate_limit;
 pub use adapter::{
     LlmProvider, NormalizedCompletion, NormalizedResponse, ProviderParseError, ProviderRequest,
     ProviderRequestContext, ProviderResponsesContext, StreamRoundOutcome, UnsupportedChatProvider,
-    rate_limit_key_for, resolve_provider,
+    rate_limit_key_for, resolve_provider, resolve_provider_for_credentials,
 };
 pub use credentials::{ApiKeyId, CredentialsError, ProviderCredentials, api_key_id};
 pub use model_ref::{ModelCapability, ModelRef, parse_model_ref, wire_model_id};

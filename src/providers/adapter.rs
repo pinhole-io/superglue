@@ -151,6 +151,23 @@ pub fn resolve_provider(
     Err(UnsupportedChatProvider(model_ref.provider))
 }
 
+/// Resolve a chat or Responses adapter for `model_ref` and `credentials`.
+///
+/// When `credentials` routes through a SuperGlue gateway, every chat provider
+/// (including Anthropic) uses the OpenAI-compatible wire adapter so requests
+/// target `/v1/chat/completions` and `/v1/responses` with `provider:model`.
+pub fn resolve_provider_for_credentials(
+    model_ref: &ModelRef,
+    credentials: &ProviderCredentials,
+) -> Result<Box<dyn LlmProvider>, UnsupportedChatProvider> {
+    if credentials.uses_gateway() && model_ref.provider.supports_chat() {
+        return Ok(Box::new(super::openai_compat::OpenAiCompatProvider::new(
+            model_ref.provider,
+        )));
+    }
+    resolve_provider(model_ref)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +194,36 @@ mod tests {
         let model_ref = parse_model_ref("anthropic:claude-sonnet-4");
         let provider = resolve_provider(&model_ref).expect("Anthropic is chat");
         assert_eq!(provider.provider_id(), ProviderId::Anthropic);
+    }
+
+    #[test]
+    fn gateway_credentials_route_anthropic_through_openai_chat_completions() {
+        let model_ref = parse_model_ref("anthropic:claude-sonnet-4-5");
+        let mut creds = ProviderCredentials::new();
+        creds.set_gateway("https://gateway.myharn.sh", "sgw-test");
+
+        let provider =
+            resolve_provider_for_credentials(&model_ref, &creds).expect("Anthropic via gateway");
+        let mut options = crate::chat::ChatOptions::new("", "", &model_ref.raw);
+        options.reasoning_effort = Some("high".to_string());
+        let messages = [ChatMessage::text("user", "hello")];
+        let req = provider.build_chat_request(&ProviderRequestContext {
+            model_ref: &model_ref,
+            credentials: &creds,
+            messages: &messages,
+            tools: None,
+            chat_tools: None,
+            stream: true,
+            options: &options,
+        });
+
+        assert_eq!(req.url, "https://gateway.myharn.sh/v1/chat/completions");
+        assert!(
+            req.headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer sgw-test")
+        );
+        assert_eq!(req.body["model"], "anthropic:claude-sonnet-4-5");
+        assert_eq!(req.body["reasoning_effort"], "high");
     }
 }

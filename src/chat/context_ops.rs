@@ -105,17 +105,19 @@ pub async fn resolve_tool_route(
         }
     };
 
-    let provider =
-        match crate::chat::resolve_chat_provider(&crate::providers::parse_model_ref(route_model)) {
-            Ok(provider) => provider,
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "tool routing provider unavailable; falling back to all dynamic tools"
-                );
-                return dynamic_specs.to_vec();
-            }
-        };
+    let provider = match crate::chat::resolve_chat_provider(
+        &crate::providers::parse_model_ref(route_model),
+        credentials,
+    ) {
+        Ok(provider) => provider,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "tool routing provider unavailable; falling back to all dynamic tools"
+            );
+            return dynamic_specs.to_vec();
+        }
+    };
     let normalized = match provider.parse_chat_response(&response) {
         Ok(n) => n,
         Err(e) => {
@@ -442,9 +444,10 @@ pub async fn maybe_summarize_messages(
         )
         .await?;
 
-        let provider = crate::chat::resolve_chat_provider(&crate::providers::parse_model_ref(
-            summarize_model,
-        ))?;
+        let provider = crate::chat::resolve_chat_provider(
+            &crate::providers::parse_model_ref(summarize_model),
+            credentials,
+        )?;
         let normalized = provider
             .parse_chat_response(&val)
             .map_err(|e| ChatError::Http(crate::http::Error::InvalidJson(e.to_string())))?;
@@ -534,8 +537,10 @@ async fn compress_messages_aaak(
     )
     .await?;
 
-    let provider =
-        crate::chat::resolve_chat_provider(&crate::providers::parse_model_ref(compress_model))?;
+    let provider = crate::chat::resolve_chat_provider(
+        &crate::providers::parse_model_ref(compress_model),
+        credentials,
+    )?;
     let normalized = provider
         .parse_chat_response(&val)
         .map_err(|e| ChatError::Http(crate::http::Error::InvalidJson(e.to_string())))?;

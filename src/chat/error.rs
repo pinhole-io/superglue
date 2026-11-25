@@ -88,11 +88,12 @@ impl ChatError {
 
 pub(crate) fn resolve_chat_provider(
     model_ref: &crate::providers::ModelRef,
+    credentials: &crate::providers::ProviderCredentials,
 ) -> Result<Box<dyn crate::providers::LlmProvider>, ChatError> {
     if let Some(capability) = model_ref.capability {
         return Err(ChatError::UnsupportedModelCapability(capability));
     }
-    crate::providers::resolve_provider(model_ref)
+    crate::providers::resolve_provider_for_credentials(model_ref, credentials)
         .map_err(|err| ChatError::UnsupportedProvider(err.0))
 }
 

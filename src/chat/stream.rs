@@ -138,7 +138,7 @@ where
     credentials
         .key_for(model_ref.provider)
         .map_err(ChatError::Credentials)?;
-    let provider = resolve_chat_provider(&model_ref)?;
+    let provider = resolve_chat_provider(&model_ref, &credentials)?;
     let ctx = crate::providers::ProviderRequestContext {
         model_ref: &model_ref,
         credentials: &credentials,

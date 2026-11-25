@@ -618,7 +618,7 @@ async fn provider_responses_post(
             .key_for(model_ref.provider)
             .map_err(ChatError::Credentials)?;
 
-        let provider = crate::chat::resolve_chat_provider(&model_ref)?;
+        let provider = crate::chat::resolve_chat_provider(&model_ref, credentials)?;
         let ctx = crate::providers::ProviderResponsesContext {
             model_ref: &model_ref,
             credentials,
@@ -876,8 +876,10 @@ async fn responses_tool_loop(
         );
         notify_llm_payload(options, api_calls, &request_id, &request_messages);
 
-        let provider =
-            crate::chat::resolve_chat_provider(&crate::providers::parse_model_ref(&options.model))?;
+        let provider = crate::chat::resolve_chat_provider(
+            &crate::providers::parse_model_ref(&options.model),
+            &credentials,
+        )?;
         let input = if provider.supports_previous_response_id() {
             next_response_input(&request_messages, &previous_response_id, &tool_input)
         } else {
@@ -1829,7 +1831,7 @@ where
             return Err(ResponseError::Chat(ChatError::Credentials(e)));
         }
 
-        let provider = crate::chat::resolve_chat_provider(&model_ref)?;
+        let provider = crate::chat::resolve_chat_provider(&model_ref, credentials)?;
         let ctx = crate::providers::ProviderResponsesContext {
             model_ref: &model_ref,
             credentials,
@@ -1896,7 +1898,9 @@ where
         let mut round_state = ResponsesStreamRound::default();
         let model_used = model_ref.raw.clone();
 
-        if model_ref.provider == crate::providers::ProviderId::Anthropic {
+        if model_ref.provider == crate::providers::ProviderId::Anthropic
+            && !credentials.uses_gateway()
+        {
             let mut acc = crate::providers::anthropic_stream::AnthropicStreamAccumulator::new();
             let mut parser = SseParser::new();
             let mut progress = HeartbeatWatch::new(http.config.stream_idle_timeout);
@@ -2280,8 +2284,10 @@ where
             tool_input = None;
         }
 
-        let provider =
-            crate::chat::resolve_chat_provider(&crate::providers::parse_model_ref(&options.model))?;
+        let provider = crate::chat::resolve_chat_provider(
+            &crate::providers::parse_model_ref(&options.model),
+            &credentials,
+        )?;
         let input = if provider.supports_previous_response_id() {
             next_response_input(&request_messages, &previous_response_id, &tool_input)
         } else {
@@ -2597,7 +2603,7 @@ pub async fn proxy_responses_stream(
         .key_for(model_ref.provider)
         .map_err(|e| ResponseError::Chat(ChatError::Credentials(e)))?;
 
-    let provider = crate::chat::resolve_chat_provider(&model_ref)?;
+    let provider = crate::chat::resolve_chat_provider(&model_ref, credentials)?;
     let ctx = crate::providers::ProviderResponsesContext {
         model_ref: &model_ref,
         credentials,

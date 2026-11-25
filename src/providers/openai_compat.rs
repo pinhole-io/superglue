@@ -39,6 +39,7 @@ impl LlmProvider for OpenAiCompatProvider {
     }
 
     fn build_chat_request(&self, ctx: &ProviderRequestContext<'_>) -> ProviderRequest {
+        let uses_gateway = ctx.credentials.uses_gateway();
         let base_url = ctx.credentials.base_url_for(ctx.model_ref.provider);
         let url = join_base_url(&base_url, "/v1/chat/completions");
         let api_key = ctx
@@ -50,16 +51,19 @@ impl LlmProvider for OpenAiCompatProvider {
             ("Authorization".to_string(), auth),
             ("Content-Type".to_string(), "application/json".to_string()),
         ];
-        if ctx.model_ref.provider == ProviderId::Xai
+        if !uses_gateway
+            && ctx.model_ref.provider == ProviderId::Xai
             && let Some(key) = &ctx.options.prompt_cache_key
         {
             headers.push(("x-grok-conv-id".to_string(), key.clone()));
         }
-        append_client_request_id(
-            self.provider,
-            &mut headers,
-            ctx.options.request_id.as_deref(),
-        );
+        if !uses_gateway {
+            append_client_request_id(
+                self.provider,
+                &mut headers,
+                ctx.options.request_id.as_deref(),
+            );
+        }
 
         let tools_owned: Option<Vec<ChatTool>> = ctx.chat_tools.map(|t| t.to_vec()).or_else(|| {
             ctx.tools.map(|specs| {
@@ -73,7 +77,7 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let options = ctx.options;
         let reasoning_effort =
-            resolve_reasoning_effort(self.provider, &ctx.model_ref.model, options);
+            resolve_reasoning_effort(self.provider, &ctx.model_ref.model, options, uses_gateway);
 
         let stream_options = if ctx.stream {
             Some(StreamOptions {
@@ -90,11 +94,12 @@ impl LlmProvider for OpenAiCompatProvider {
         {
             extra.insert("prompt_cache_key".to_string(), json!(key));
         }
-        if self.provider.exposes_generation_cost() {
+        if !uses_gateway && self.provider.exposes_generation_cost() {
             extra.insert("usage".to_string(), json!({ "include": true }));
         }
         let mut max_completion_tokens = options.max_completion_tokens;
-        if self.provider.uses_legacy_max_tokens()
+        if !uses_gateway
+            && self.provider.uses_legacy_max_tokens()
             && let Some(max) = max_completion_tokens.take()
         {
             extra.insert("max_tokens".to_string(), json!(max));
@@ -174,6 +179,7 @@ impl LlmProvider for OpenAiCompatProvider {
     }
 
     fn build_responses_request(&self, ctx: &ProviderResponsesContext<'_>) -> ProviderRequest {
+        let uses_gateway = ctx.credentials.uses_gateway();
         let base_url = ctx.credentials.base_url_for(ctx.model_ref.provider);
         let url = join_base_url(&base_url, "/v1/responses");
         let api_key = ctx
@@ -185,16 +191,19 @@ impl LlmProvider for OpenAiCompatProvider {
             ("Authorization".to_string(), auth),
             ("Content-Type".to_string(), "application/json".to_string()),
         ];
-        if ctx.model_ref.provider == ProviderId::Xai
+        if !uses_gateway
+            && ctx.model_ref.provider == ProviderId::Xai
             && let Some(key) = ctx.options.prompt_cache_key.as_ref()
         {
             headers.push(("x-grok-conv-id".to_string(), key.clone()));
         }
-        append_client_request_id(
-            self.provider,
-            &mut headers,
-            ctx.options.request_id.as_deref(),
-        );
+        if !uses_gateway {
+            append_client_request_id(
+                self.provider,
+                &mut headers,
+                ctx.options.request_id.as_deref(),
+            );
+        }
 
         let mut body = ctx.body.clone();
         if let Some(obj) = body.as_object_mut() {
@@ -267,12 +276,11 @@ fn resolve_reasoning_effort(
     provider: ProviderId,
     model: &str,
     options: &crate::chat::ChatOptions,
+    uses_gateway: bool,
 ) -> Option<String> {
     let effort = options.reasoning_effort.as_ref()?;
     normalize_reasoning_effort_str(model, effort).or_else(|| {
-        provider
-            .passthrough_reasoning_effort()
-            .then(|| effort.clone())
+        (uses_gateway || provider.passthrough_reasoning_effort()).then(|| effort.clone())
     })
 }
 
