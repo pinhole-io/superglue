@@ -462,11 +462,26 @@ fn looks_like_function_call_id(id: &str) -> bool {
 
 /// Prefer completed output when it has real `call_…` ids; otherwise keep streamed ids
 /// (completed items sometimes only carry `fc_…` output item ids).
+fn fill_missing_call_fields(target: &mut [StreamedFunctionCall], donor: &[StreamedFunctionCall]) {
+    for call in target.iter_mut() {
+        let Some(found) = donor.iter().find(|other| other.call_id == call.call_id) else {
+            continue;
+        };
+        if call.name.is_empty() && !found.name.is_empty() {
+            call.name = found.name.clone();
+        }
+        if call.arguments.trim().is_empty() && !found.arguments.trim().is_empty() {
+            call.arguments = found.arguments.clone();
+        }
+    }
+}
+
 fn resolve_round_function_calls(round_state: &ResponsesStreamRound) -> Vec<StreamedFunctionCall> {
-    let from_output = function_calls_from_output(&round_state.raw_output);
+    let mut from_output = function_calls_from_output(&round_state.raw_output);
     if from_output.is_empty() {
         return round_state.function_calls.clone();
     }
+    fill_missing_call_fields(&mut from_output, &round_state.function_calls);
     let output_has_call_ids = from_output
         .iter()
         .any(|c| looks_like_function_call_id(&c.call_id));
@@ -478,7 +493,9 @@ fn resolve_round_function_calls(round_state: &ResponsesStreamRound) -> Vec<Strea
         .iter()
         .any(|c| looks_like_function_call_id(&c.call_id));
     if stream_has_call_ids {
-        return round_state.function_calls.clone();
+        let mut streamed = round_state.function_calls.clone();
+        fill_missing_call_fields(&mut streamed, &from_output);
+        return streamed;
     }
     from_output
 }
@@ -496,11 +513,17 @@ fn push_streamed_function_call(
     round_state: &mut ResponsesStreamRound,
     call: StreamedFunctionCall,
 ) -> bool {
-    if round_state
+    if let Some(existing) = round_state
         .function_calls
-        .iter()
-        .any(|c| c.call_id == call.call_id)
+        .iter_mut()
+        .find(|c| c.call_id == call.call_id)
     {
+        if existing.name.is_empty() && !call.name.is_empty() {
+            existing.name = call.name;
+        }
+        if existing.arguments.trim().is_empty() && !call.arguments.trim().is_empty() {
+            existing.arguments = call.arguments;
+        }
         return false;
     }
     round_state.function_calls.push(call);
@@ -1706,13 +1729,14 @@ async fn apply_responses_stream_event(
                     .and_then(|x| x.as_str())
                     .unwrap_or_default()
                     .to_string();
-                if !name.is_empty() {
+                if !name.is_empty() || !arguments.trim().is_empty() {
                     let call = StreamedFunctionCall {
                         call_id,
                         name,
                         arguments,
                     };
                     // Record the call only; ToolCallStart waits for dispatch_one.
+                    // A later item can fill a missing name or the argument JSON.
                     let _ = push_streamed_function_call(round_state, call);
                 }
             }
@@ -2842,6 +2866,55 @@ mod tests {
 
         assert_eq!(round_state.function_calls.len(), 1);
         assert_eq!(round_state.function_calls[0].name, "echo");
+        assert_eq!(round_state.function_calls[0].arguments, "{\"x\":1}");
+    }
+
+    #[tokio::test]
+    async fn arguments_done_without_name_keeps_arguments_until_item_done() {
+        let mut round_state = ResponsesStreamRound::default();
+        apply_responses_stream_event(
+            &json!({
+                "type": "response.function_call_arguments.done",
+                "call_id": "call_1",
+                "arguments": "{\"query\":\"intuit IES\"}"
+            }),
+            "response.function_call_arguments.done",
+            &mut round_state,
+            &mut |_delta| {},
+            &mut |_reasoning| {},
+            None,
+            "req-1",
+            1,
+            "gpt-6-luna",
+        )
+        .await;
+        apply_responses_stream_event(
+            &json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "web_search",
+                    "arguments": ""
+                }
+            }),
+            "response.output_item.done",
+            &mut round_state,
+            &mut |_delta| {},
+            &mut |_reasoning| {},
+            None,
+            "req-1",
+            1,
+            "gpt-6-luna",
+        )
+        .await;
+
+        assert_eq!(round_state.function_calls.len(), 1);
+        assert_eq!(round_state.function_calls[0].name, "web_search");
+        assert_eq!(
+            round_state.function_calls[0].arguments,
+            "{\"query\":\"intuit IES\"}"
+        );
     }
 
     #[tokio::test]
@@ -3244,6 +3317,27 @@ mod tests {
         let resolved = resolve_round_function_calls(&round_state);
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].call_id, "call_xyz");
+    }
+
+    #[test]
+    fn resolve_keeps_streamed_arguments_when_output_item_is_empty() {
+        let mut round_state = ResponsesStreamRound::default();
+        round_state.function_calls.push(StreamedFunctionCall {
+            call_id: "call_1".into(),
+            name: String::new(),
+            arguments: "{\"query\":\"intuit IES\"}".into(),
+        });
+        round_state.raw_output = vec![ResponseOutputItem::FunctionCall {
+            id: None,
+            call_id: "call_1".into(),
+            name: "web_search".into(),
+            arguments: String::new(),
+        }];
+
+        let resolved = resolve_round_function_calls(&round_state);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "web_search");
+        assert_eq!(resolved[0].arguments, "{\"query\":\"intuit IES\"}");
     }
 
     #[test]

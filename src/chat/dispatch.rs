@@ -93,6 +93,18 @@ pub(crate) fn truncate_bytes(value: &str, max_bytes: usize) -> String {
     format!("{}…", &value[..end])
 }
 
+/// Bound a process-event field so a large tool payload stays out of the log.
+fn metadata_preview(text: &str) -> String {
+    const MAX_CHARS: usize = 500;
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
 /// Truncate tool-result text before it is appended to chat history.
 pub(crate) fn truncate_tool_result(content: String, max_chars: usize) -> String {
     if max_chars == 0 || content.len() <= max_chars {
@@ -188,6 +200,10 @@ pub(crate) async fn dispatch_one(
             .insert("tool_name".to_string(), tool_name.clone());
         ev.metadata
             .insert("tool_call_id".to_string(), tc.id.clone());
+        ev.metadata.insert(
+            "arguments".to_string(),
+            metadata_preview(tc.function.arguments.trim()),
+        );
         emit_safe(Some(emitter), ev).await;
     }
 
@@ -399,8 +415,10 @@ pub(crate) async fn dispatch_one(
         ev.metadata
             .insert("tool_call_id".to_string(), tc.id.clone());
         match &exec_result {
-            Ok(_) => {
+            Ok(content) => {
                 ev.metadata.insert("outcome".to_string(), "ok".to_string());
+                ev.metadata
+                    .insert("result".to_string(), metadata_preview(content));
             }
             Err(err) => {
                 ev.error_type = Some(chat_error_class(err).to_string());

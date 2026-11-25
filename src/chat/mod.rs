@@ -319,6 +319,7 @@ mod dispatch_freshness_tests {
     use tokio::sync::Mutex;
 
     use super::{DispatchCtx, dispatch_one, new_tool_loop_guard};
+    use crate::events::{CollectingSubscriber, ProcessEventKind, StatusEmitter};
     use crate::hooks::HookRegistry;
     use crate::openai::{FunctionCall, ToolCall};
     use crate::tools::{Tool, ToolInvokeError, ToolRegistry, ToolSpec};
@@ -454,6 +455,55 @@ mod dispatch_freshness_tests {
         assert!(!second_text.contains("before"));
         assert_eq!(read.calls.load(Ordering::SeqCst), 2);
         assert_eq!(edit.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn tool_call_start_event_includes_arguments() {
+        let read = Arc::new(CountingRead {
+            calls: AtomicU32::new(0),
+            content: Arc::new(Mutex::new("body".to_string())),
+        });
+        let registry = ToolRegistry::new();
+        registry.register(read).await.expect("register read");
+        let hooks = HookRegistry::new();
+        let emitter = Arc::new(StatusEmitter::new());
+        let collector = Arc::new(CollectingSubscriber::new());
+        emitter.subscribe(collector.clone()).await;
+        let ctx = DispatchCtx {
+            hooks: &hooks,
+            registry: &registry,
+            status_emitter: Some(&emitter),
+            request_id: "req",
+            round: 1,
+            model: "test",
+            emit_start: true,
+            tool_result_max_chars: 0,
+            loop_guard: None,
+            cancel: None,
+            code_allowlist: None,
+        };
+        let args = json!({"path": "src/foo.rs"}).to_string();
+        dispatch_one(&tool_call("1", "read", json!({"path": "src/foo.rs"})), ctx)
+            .await
+            .expect("read");
+        let events = collector.take_events().await;
+        let start = events
+            .iter()
+            .find(|event| event.kind == ProcessEventKind::ToolCallStart)
+            .expect("tool start");
+        assert_eq!(
+            start.metadata.get("arguments").map(String::as_str),
+            Some(args.as_str())
+        );
+        let end = events
+            .iter()
+            .find(|event| event.kind == ProcessEventKind::ToolCallEnd)
+            .expect("tool end");
+        assert!(
+            end.metadata
+                .get("result")
+                .is_some_and(|result| result.contains("body"))
+        );
     }
 
     #[test]
