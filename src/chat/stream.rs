@@ -139,10 +139,11 @@ where
         .key_for(model_ref.provider)
         .map_err(ChatError::Credentials)?;
     let provider = resolve_chat_provider(&model_ref, &credentials)?;
+    let request_messages = messages_with_volatile_suffix(options, &full_messages);
     let ctx = crate::providers::ProviderRequestContext {
         model_ref: &model_ref,
         credentials: &credentials,
-        messages: &full_messages,
+        messages: &request_messages,
         tools: None,
         chat_tools: None,
         stream: true,
@@ -162,7 +163,7 @@ where
         &request_id,
         &model_ref.model,
         model_ref.provider.as_str(),
-        &full_messages,
+        &request_messages,
         None,
         &params,
     );

@@ -225,6 +225,67 @@ mod truncate_tests {
         assert_eq!(client[0].role, "user");
     }
 
+    #[tokio::test]
+    async fn stream_complete_sends_volatile_suffix_blocks() {
+        use crate::http::{ClientConfig, HttpClient};
+        use crate::providers::{ProviderCredentials, ProviderId};
+        use std::sync::Arc;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":0,",
+            "\"model\":\"gpt-4o-mini\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
+            "\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+
+        let http = HttpClient::new(ClientConfig::default()).expect("http");
+        let hooks = crate::hooks::HookRegistry::new();
+        let guardrails = crate::guardrails::GuardrailRegistry::new();
+        let mut options = super::ChatOptions::new(server.uri(), "test-key", "openai:gpt-4o-mini");
+        options.system_prompt_blocks = Some(vec![super::SystemPromptBlock::cached("base")]);
+        options.volatile_suffix_blocks = Some(vec![super::SystemPromptBlock::uncached(
+            "role: check fresno weather",
+        )]);
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::OpenAi, "test-key");
+        creds.insert_base_url(ProviderId::OpenAi, server.uri());
+        options.provider_credentials = Some(Arc::new(creds));
+
+        let outcome = super::stream_complete(
+            &http,
+            &hooks,
+            &guardrails,
+            vec![ChatMessage::text("user", "wake up")],
+            &options,
+            |_| {},
+        )
+        .await
+        .expect("stream_complete");
+        assert_eq!(outcome.content, "ok");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        let msgs = body["messages"].as_array().expect("messages array");
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[2]["role"], "system");
+        assert_eq!(msgs[2]["content"], "role: check fresno weather");
+    }
+
     #[test]
     fn prompt_prefix_hash_ignores_volatile_suffix() {
         let mut stable = super::ChatOptions::new("https://api.openai.com", "k", "m");

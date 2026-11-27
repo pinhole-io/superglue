@@ -208,25 +208,19 @@ pub(crate) async fn dispatch_one(
     }
 
     let exec_result: Result<String, ChatError> = async {
+        let mut pre_ctx = HookContext::with_meta(
+            HookStage::PreTool,
+            tc.function.arguments.trim(),
+            "tool_name",
+            tc.function.name.as_str(),
+        );
+        pre_ctx
+            .metadata
+            .insert("tool_call_id".into(), json!(tc.id.as_str()));
         let pre_ctx = if hooks.is_empty_for(&HookStage::PreTool).await {
-            HookContext::with_meta(
-                HookStage::PreTool,
-                tc.function.arguments.trim(),
-                "tool_name",
-                tc.function.name.as_str(),
-            )
+            pre_ctx
         } else {
-            hooks
-                .run(
-                    HookStage::PreTool,
-                    HookContext::with_meta(
-                        HookStage::PreTool,
-                        tc.function.arguments.trim(),
-                        "tool_name",
-                        tc.function.name.as_str(),
-                    ),
-                )
-                .await?
+            hooks.run(HookStage::PreTool, pre_ctx).await?
         };
         if pre_ctx.metadata.get("tool_skip").and_then(|v| v.as_bool()) == Some(true) {
             let skip_result = pre_ctx
@@ -369,6 +363,9 @@ pub(crate) async fn dispatch_one(
             "context_policy".into(),
             json!(tool.context_policy().as_str()),
         );
+        post_ctx
+            .metadata
+            .insert("tool_call_id".into(), json!(tc.id.as_str()));
         post_ctx
             .metadata
             .insert("arguments".into(), json!(tc.function.arguments.trim()));

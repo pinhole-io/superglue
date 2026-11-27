@@ -10,7 +10,7 @@ use tracing::instrument;
 use super::types::{DEFAULT_MODEL, Question, State, SystemOneRequest, SystemOneResponse};
 use crate::http::{Error as HttpError, HttpClient, join_base_url};
 use crate::providers::{
-    CredentialsError, ProviderCredentials, ProviderId, parse_model_ref, rate_limit_key_for,
+    CredentialsError, ProviderCredentials, ProviderId, RateLimitKey, api_key_id, parse_model_ref,
 };
 
 /// Path on both TypeSafe and the SuperGlue gateway.
@@ -164,11 +164,12 @@ async fn evaluate(
     request: SystemOneRequest,
 ) -> Result<SystemOneResponse, SystemOneError> {
     let model_ref = qualify_model(request.model.as_deref())?;
-    credentials.key_for(model_ref.provider)?;
-    let base_url = credentials.base_url_for(model_ref.provider);
+    let (base_url, key) = system_one_auth(credentials, model_ref.provider)?;
     let url = join_base_url(&base_url, SYSTEM_ONE_PATH);
-    let key = credentials.key_for(model_ref.provider)?;
-    let rate_limit_key = rate_limit_key_for(&model_ref, credentials)?;
+    let rate_limit_key = RateLimitKey {
+        provider: model_ref.provider,
+        key_id: api_key_id(&key),
+    };
 
     let mut body = request;
     body.model = Some(wire_system_one_model(
@@ -190,6 +191,26 @@ async fn evaluate(
         .map_err(map_http_error)?;
 
     serde_json::from_value(value).map_err(|err| SystemOneError::Parse(err.to_string()))
+}
+
+/// Prefer a stored TypeSafe key over the SuperGlue gateway key.
+///
+/// Chat stays on the gateway. System One is a native TypeSafe call, and the
+/// gateway key may not be allowed to use `typesafe:jev-latest`.
+fn system_one_auth(
+    credentials: &ProviderCredentials,
+    provider: ProviderId,
+) -> Result<(String, secrecy::SecretString), SystemOneError> {
+    if let Some(key) = credentials.direct_key(provider) {
+        let base_url = credentials
+            .direct_base_url(provider)
+            .unwrap_or_else(|| provider.default_base_url().to_string());
+        return Ok((base_url, key));
+    }
+    Ok((
+        credentials.base_url_for(provider),
+        credentials.key_for(provider)?,
+    ))
 }
 
 fn system_one_error_kind(err: &SystemOneError) -> &'static str {
@@ -252,6 +273,29 @@ mod tests {
             system_one_error_kind(&SystemOneError::UnsupportedProvider(ProviderId::OpenAi)),
             "unsupported_provider"
         );
+    }
+
+    #[test]
+    fn direct_typesafe_key_bypasses_gateway() {
+        let mut creds = ProviderCredentials::new();
+        creds.insert_key(ProviderId::TypeSafe, "ts-direct");
+        creds.set_gateway("https://gateway.example.com/v1", "sgw-test");
+        let (base_url, key) = system_one_auth(&creds, ProviderId::TypeSafe).expect("auth");
+        assert_eq!(base_url, ProviderId::TypeSafe.default_base_url());
+        assert_eq!(key.expose_secret(), "ts-direct");
+        assert_eq!(
+            wire_system_one_model("typesafe:jev-latest", &base_url),
+            "jev-latest"
+        );
+    }
+
+    #[test]
+    fn gateway_key_is_used_when_no_direct_key_is_stored() {
+        let mut creds = ProviderCredentials::new();
+        creds.set_gateway("https://gateway.example.com/v1", "sgw-test");
+        let (base_url, key) = system_one_auth(&creds, ProviderId::TypeSafe).expect("auth");
+        assert_eq!(base_url, "https://gateway.example.com");
+        assert_eq!(key.expose_secret(), "sgw-test");
     }
 
     #[test]

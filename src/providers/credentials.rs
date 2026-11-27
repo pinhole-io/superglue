@@ -84,6 +84,21 @@ impl ProviderCredentials {
         self.gateway.is_some()
     }
 
+    /// Key stored for `provider` before gateway routing.
+    ///
+    /// [`Self::key_for`] returns the gateway key when a gateway is set. Native
+    /// TypeSafe calls still need `TYPESAFE_API_KEY` from the environment.
+    #[must_use]
+    pub fn direct_key(&self, provider: ProviderId) -> Option<SecretString> {
+        self.keys.get(&provider).cloned()
+    }
+
+    /// Base URL stored for `provider` before gateway routing.
+    #[must_use]
+    pub fn direct_base_url(&self, provider: ProviderId) -> Option<String> {
+        self.base_urls.get(&provider).cloned()
+    }
+
     /// Load keys from each provider's `env_var_for_key`, plus known aliases.
     #[must_use]
     pub fn from_env() -> Self {
