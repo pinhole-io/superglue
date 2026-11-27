@@ -11,7 +11,7 @@ use crate::context::{
     message_text, passthrough_aaak_context, passthrough_at_messages, transcript_from_messages,
 };
 use crate::http::HttpClient;
-use crate::openai::{ChatMessage, MessageContent};
+use crate::openai::{ChatMessage, ContentPart, MessageContent};
 use crate::providers::{ProviderCredentials, parse_model_ref};
 use crate::systemone::{Noul, Questions, SystemOneRequest, clip_state, noul_yes, system_one};
 use crate::tools::ToolSpec;
@@ -251,8 +251,7 @@ pub(crate) fn estimate_context_chars(messages: &[ChatMessage]) -> usize {
             let content_chars = message
                 .content
                 .as_ref()
-                .and_then(MessageContent::as_text)
-                .map_or(0, |text| text.chars().count());
+                .map_or(0, estimate_message_content_chars);
             let tool_call_chars = message.tool_calls.as_ref().map_or(0, |calls| {
                 calls
                     .iter()
@@ -266,6 +265,32 @@ pub(crate) fn estimate_context_chars(messages: &[ChatMessage]) -> usize {
             message.role.chars().count() + content_chars + tool_call_chars + 16
         })
         .sum()
+}
+
+fn estimate_message_content_chars(content: &MessageContent) -> usize {
+    match content {
+        MessageContent::Text(text) => text.chars().count(),
+        MessageContent::Parts(parts) => parts.iter().map(estimate_content_part_chars).sum(),
+    }
+}
+
+fn estimate_content_part_chars(part: &ContentPart) -> usize {
+    match part {
+        ContentPart::Text { text } => text.chars().count(),
+        ContentPart::ImageUrl { image_url } => image_url.url.chars().count(),
+        ContentPart::ImageRef { hash, filename } => {
+            hash.chars().count() + filename.as_deref().map_or(0, |name| name.chars().count())
+        }
+        ContentPart::File { file } => {
+            file.file_data.as_deref().map_or(0, |d| d.chars().count())
+                + file.file_id.as_deref().map_or(0, |id| id.chars().count())
+                + file
+                    .filename
+                    .as_deref()
+                    .map_or(0, |name| name.chars().count())
+        }
+        ContentPart::InputAudio { input_audio } => input_audio.data.chars().count(),
+    }
 }
 
 fn context_fill_percent(prompt_tokens: u32, window_tokens: u32) -> u8 {
@@ -851,5 +876,52 @@ mod tests {
         .await;
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].name, "read");
+    }
+
+    #[test]
+    fn estimate_context_chars_counts_multipart_text_images_and_files() {
+        use crate::openai::{ContentPart, FileContent, ImageUrl};
+
+        let multipart = ChatMessage {
+            role: "user".into(),
+            content: Some(MessageContent::Parts(vec![
+                ContentPart::Text {
+                    text: "hello world".into(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,AAAA".into(),
+                        detail: None,
+                    },
+                },
+                ContentPart::ImageRef {
+                    hash: "deadbeef".into(),
+                    filename: Some("shot.png".into()),
+                },
+                ContentPart::File {
+                    file: FileContent {
+                        file_data: Some("BBBB".into()),
+                        file_id: Some("file_123".into()),
+                        filename: Some("doc.pdf".into()),
+                    },
+                },
+            ])),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
+        };
+
+        let expected_parts_chars = "hello world".chars().count()
+            + "data:image/png;base64,AAAA".chars().count()
+            + "deadbeef".chars().count()
+            + "shot.png".chars().count()
+            + "BBBB".chars().count()
+            + "file_123".chars().count()
+            + "doc.pdf".chars().count();
+        let expected_total = "user".chars().count() + 16 + expected_parts_chars;
+
+        assert_eq!(estimate_context_chars(&[multipart]), expected_total);
     }
 }

@@ -321,15 +321,12 @@ fn build_system_payload(
         }
     } else if let Some(sys) = legacy_system.filter(|s| !s.is_empty()) {
         Some(Value::String(sys.to_string()))
-    } else if let Some(sp) = ctx
-        .options
-        .system_prompt
-        .as_deref()
-        .filter(|s| !s.is_empty())
-    {
-        Some(Value::String(sp.to_string()))
     } else {
-        None
+        ctx.options
+            .system_prompt
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|sp| Value::String(sp.to_string()))
     }
 }
 
@@ -416,38 +413,81 @@ fn merge_assistant_text_into_blocks(blocks: &mut Vec<Value>, content: Option<&Me
     }
 }
 
+#[derive(Default)]
+struct PendingUserTurn<'a> {
+    tool_blocks: Vec<Value>,
+    user_messages: Vec<&'a ChatMessage>,
+}
+
+impl<'a> PendingUserTurn<'a> {
+    fn is_empty(&self) -> bool {
+        self.tool_blocks.is_empty() && self.user_messages.is_empty()
+    }
+
+    fn flush(&mut self, out: &mut Vec<Value>) {
+        if self.is_empty() {
+            return;
+        }
+        if self.tool_blocks.is_empty() && self.user_messages.len() == 1 {
+            let msg = self
+                .user_messages
+                .pop()
+                .expect("user_messages length checked");
+            out.push(json!({
+                "role": "user",
+                "content": map_user_content(msg),
+            }));
+            return;
+        }
+        let mut blocks = std::mem::take(&mut self.tool_blocks);
+        for msg in self.user_messages.drain(..) {
+            append_user_blocks(&mut blocks, msg);
+        }
+        let content = if blocks.is_empty() {
+            json!("")
+        } else {
+            Value::Array(blocks)
+        };
+        out.push(json!({
+            "role": "user",
+            "content": content,
+        }));
+    }
+}
+
 fn map_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
     let mut system_parts = Vec::new();
     let mut out = Vec::new();
+    let mut pending_user = PendingUserTurn::default();
 
     for msg in messages {
         match msg.role.as_str() {
             "system" => {
-                if let Some(c) = &msg.content {
-                    if let Some(t) = c.as_text() {
-                        system_parts.push(t.to_string());
-                    }
+                if let Some(c) = &msg.content
+                    && let Some(t) = c.as_text()
+                {
+                    system_parts.push(t.to_string());
                 }
             }
             "user" => {
-                out.push(json!({
-                    "role": "user",
-                    "content": map_user_content(msg),
-                }));
+                pending_user.user_messages.push(msg);
             }
             "assistant" => {
                 if let Some(blocks) = &msg.provider_blocks {
                     let mut content = blocks.clone();
                     merge_assistant_tool_calls_into_blocks(&mut content, msg.tool_calls.as_ref());
                     merge_assistant_text_into_blocks(&mut content, msg.content.as_ref());
-                    out.push(json!({"role": "assistant", "content": content}));
+                    if !content.is_empty() {
+                        pending_user.flush(&mut out);
+                        out.push(json!({"role": "assistant", "content": content}));
+                    }
                     continue;
                 }
                 let mut blocks = Vec::new();
-                if let Some(c) = &msg.content {
-                    if let Some(t) = c.as_text() {
-                        blocks.push(json!({"type": "text", "text": t}));
-                    }
+                if let Some(c) = &msg.content
+                    && let Some(t) = c.as_text()
+                {
+                    blocks.push(json!({"type": "text", "text": t}));
                 }
                 if let Some(tcs) = &msg.tool_calls {
                     for tc in tcs {
@@ -464,23 +504,23 @@ fn map_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
                     }
                 }
                 if !blocks.is_empty() {
+                    pending_user.flush(&mut out);
                     out.push(json!({"role": "assistant", "content": blocks}));
                 }
             }
             "tool" => {
                 let content = msg.content.as_ref().and_then(|c| c.as_text()).unwrap_or("");
-                out.push(json!({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": msg.tool_call_id,
-                        "content": content,
-                    }],
+                pending_user.tool_blocks.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": msg.tool_call_id,
+                    "content": content,
                 }));
             }
             _ => {}
         }
     }
+
+    pending_user.flush(&mut out);
 
     let system = if system_parts.is_empty() {
         None
@@ -490,36 +530,68 @@ fn map_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
     (system, out)
 }
 
+fn append_user_blocks(blocks: &mut Vec<Value>, msg: &ChatMessage) {
+    match &msg.content {
+        None => {}
+        Some(MessageContent::Text(t)) => {
+            if !t.is_empty() {
+                blocks.push(json!({"type": "text", "text": t}));
+            }
+        }
+        Some(MessageContent::Parts(parts)) => {
+            blocks.extend(parts.iter().map(map_content_part));
+        }
+    }
+}
+
 fn map_user_content(msg: &ChatMessage) -> Value {
     match &msg.content {
         None => json!(""),
         Some(MessageContent::Text(t)) => json!(t),
         Some(MessageContent::Parts(parts)) => {
-            let blocks: Vec<Value> = parts
-                .iter()
-                .map(|p| match p {
-                    ContentPart::Text { text } => json!({"type": "text", "text": text}),
-                    ContentPart::ImageUrl { image_url } => json!({
-                        "type": "image",
-                        "source": {
-                            "type": "url",
-                            "url": image_url.url,
-                        }
-                    }),
-                    ContentPart::File { file } => map_file_part(file),
-                    ContentPart::ImageRef { hash, .. } => json!({
-                        "type": "text",
-                        "text": format!("[unresolved image_ref: {hash}]")
-                    }),
-                    ContentPart::InputAudio { .. } => json!({
-                        "type": "text",
-                        "text": "[audio input not supported on anthropic adapter]"
-                    }),
-                })
-                .collect();
+            let blocks: Vec<Value> = parts.iter().map(map_content_part).collect();
             json!(blocks)
         }
     }
+}
+
+fn map_content_part(part: &ContentPart) -> Value {
+    match part {
+        ContentPart::Text { text } => json!({"type": "text", "text": text}),
+        ContentPart::ImageUrl { image_url } => map_image_url(&image_url.url),
+        ContentPart::File { file } => map_file_part(file),
+        ContentPart::ImageRef { hash, .. } => json!({
+            "type": "text",
+            "text": format!("[unresolved image_ref: {hash}]")
+        }),
+        ContentPart::InputAudio { .. } => json!({
+            "type": "text",
+            "text": "[audio input not supported on anthropic adapter]"
+        }),
+    }
+}
+
+fn map_image_url(url: &str) -> Value {
+    if let Some(rest) = url.strip_prefix("data:")
+        && let Some((media_type, data)) = rest.split_once(";base64,")
+        && !media_type.is_empty()
+    {
+        return json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data,
+            }
+        });
+    }
+    json!({
+        "type": "image",
+        "source": {
+            "type": "url",
+            "url": url,
+        }
+    })
 }
 
 fn map_file_part(file: &FileContent) -> Value {
@@ -793,5 +865,226 @@ mod tests {
         assert_eq!(output[0]["type"].as_str(), Some("function_call"));
         assert_eq!(output[0]["name"].as_str(), Some("echo"));
         assert_eq!(output[0]["call_id"].as_str(), Some("toolu_1"));
+    }
+
+    #[test]
+    fn adjacent_tool_and_user_messages_coalesce_with_tool_results_first() {
+        use crate::openai::ImageUrl;
+
+        let assistant_tool_use = ChatMessage {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(vec![
+                ToolCall {
+                    id: "toolu_1".into(),
+                    kind: "function".into(),
+                    function: FunctionCall {
+                        name: "step_one".into(),
+                        arguments: r#"{"a":1}"#.into(),
+                    },
+                },
+                ToolCall {
+                    id: "toolu_2".into(),
+                    kind: "function".into(),
+                    function: FunctionCall {
+                        name: "step_two".into(),
+                        arguments: r#"{"b":2}"#.into(),
+                    },
+                },
+            ]),
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
+        };
+        let tool_one = ChatMessage {
+            role: "tool".into(),
+            content: Some(MessageContent::Text(r#"{"ok":true,"step":1}"#.into())),
+            tool_calls: None,
+            tool_call_id: Some("toolu_1".into()),
+            name: Some("step_one".into()),
+            refusal: None,
+            provider_blocks: None,
+        };
+        let tool_two = ChatMessage {
+            role: "tool".into(),
+            content: Some(MessageContent::Text(r#"{"ok":true,"step":2}"#.into())),
+            tool_calls: None,
+            tool_call_id: Some("toolu_2".into()),
+            name: Some("step_two".into()),
+            refusal: None,
+            provider_blocks: None,
+        };
+        let boundary_user = ChatMessage {
+            role: "user".into(),
+            content: Some(MessageContent::Parts(vec![
+                ContentPart::Text {
+                    text: "screenshot after tools".into(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "https://example.com/screen.png".into(),
+                        detail: None,
+                    },
+                },
+            ])),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
+        };
+
+        let (_, mapped) = map_messages(&[
+            ChatMessage::text("user", "start"),
+            assistant_tool_use,
+            tool_one,
+            tool_two,
+            boundary_user,
+        ]);
+
+        assert_eq!(
+            mapped.len(),
+            3,
+            "adjacent tool and user messages must coalesce into one user entry: {mapped:?}"
+        );
+        assert_eq!(mapped[0]["role"].as_str(), Some("user"));
+        assert_eq!(mapped[1]["role"].as_str(), Some("assistant"));
+        assert_eq!(mapped[2]["role"].as_str(), Some("user"));
+
+        let blocks = mapped[2]["content"]
+            .as_array()
+            .expect("merged user content array");
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0]["type"].as_str(), Some("tool_result"));
+        assert_eq!(blocks[0]["tool_use_id"].as_str(), Some("toolu_1"));
+        assert_eq!(blocks[1]["type"].as_str(), Some("tool_result"));
+        assert_eq!(blocks[1]["tool_use_id"].as_str(), Some("toolu_2"));
+        assert_eq!(blocks[2]["type"].as_str(), Some("text"));
+        assert_eq!(blocks[2]["text"].as_str(), Some("screenshot after tools"));
+        assert_eq!(blocks[3]["type"].as_str(), Some("image"));
+    }
+
+    #[test]
+    fn user_before_tool_still_orders_tool_result_first_and_coalesces_consecutive_users() {
+        let assistant_tool_use = ChatMessage {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "toolu_1".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "echo".into(),
+                    arguments: "{}".into(),
+                },
+            }]),
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
+        };
+        let tool_msg = ChatMessage {
+            role: "tool".into(),
+            content: Some(MessageContent::Text("done".into())),
+            tool_calls: None,
+            tool_call_id: Some("toolu_1".into()),
+            name: Some("echo".into()),
+            refusal: None,
+            provider_blocks: None,
+        };
+
+        let (_, mapped) = map_messages(&[
+            ChatMessage::text("user", "first"),
+            ChatMessage::text("user", "second"),
+            assistant_tool_use,
+            ChatMessage::text("user", "note"),
+            tool_msg,
+        ]);
+
+        assert_eq!(mapped.len(), 3);
+        let first_blocks = mapped[0]["content"]
+            .as_array()
+            .expect("coalesced initial user blocks");
+        assert_eq!(first_blocks.len(), 2);
+        assert_eq!(first_blocks[0]["text"].as_str(), Some("first"));
+        assert_eq!(first_blocks[1]["text"].as_str(), Some("second"));
+
+        let last_blocks = mapped[2]["content"]
+            .as_array()
+            .expect("coalesced tool+user blocks");
+        assert_eq!(last_blocks.len(), 2);
+        assert_eq!(last_blocks[0]["type"].as_str(), Some("tool_result"));
+        assert_eq!(last_blocks[0]["tool_use_id"].as_str(), Some("toolu_1"));
+        assert_eq!(last_blocks[1]["type"].as_str(), Some("text"));
+        assert_eq!(last_blocks[1]["text"].as_str(), Some("note"));
+    }
+
+    #[test]
+    fn user_image_data_url_maps_to_base64_and_http_urls_keep_url_source() {
+        use crate::openai::ImageUrl;
+
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: Some(MessageContent::Parts(vec![
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,aW1hZ2U=".into(),
+                        detail: None,
+                    },
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "https://example.com/photo.jpg".into(),
+                        detail: None,
+                    },
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "http://example.com/plain.png".into(),
+                        detail: None,
+                    },
+                },
+            ])),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            refusal: None,
+            provider_blocks: None,
+        };
+
+        let content = map_user_content(&msg);
+        let blocks = content.as_array().expect("multipart blocks");
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(
+            blocks[0],
+            json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "aW1hZ2U=",
+                }
+            })
+        );
+        assert_eq!(
+            blocks[1],
+            json!({
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.com/photo.jpg",
+                }
+            })
+        );
+        assert_eq!(
+            blocks[2],
+            json!({
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "http://example.com/plain.png",
+                }
+            })
+        );
     }
 }
